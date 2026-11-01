@@ -24,7 +24,7 @@ const sourceFiles = ['app/main.js', 'app/device.js', 'app/index.html', 'app/styl
 const hashes = () => Object.fromEntries(sourceFiles.map(f => [f, createHash('sha256').update(readFileSync(root + f)).digest('hex')]));
 const report = { scope: 'Production UI in Chromium; mock public Tizen API only; no TV contacted.', sourceBefore: hashes(), checks: [], failures: [], pageErrors: [], expectedNetworkFailures: [] };
 const same = (a, b) => JSON.stringify(a) === JSON.stringify(b);
-const baseline = (patch = {}) => ({ dock: PRIMARY.slice(), wallpaper: walls[0].id, mode: 'fixed', lastApp: 'netflix', theme: 'shore', ...patch });
+const baseline = (patch = {}) => ({ homePreset: 'uk-hdmi-v1', dock: PRIMARY.slice(), wallpaper: walls[0].id, mode: 'fixed', lastApp: 'netflix', theme: 'shore', ...patch });
 let preview, current, section = '';
 
 function check(name, pass, detail) {
@@ -214,6 +214,18 @@ async function noLiveFilters() {
 
 try {
   preview = await openPreview();
+  await run('Requested eight-item Home preset', async () => {
+    await page({ seed: undefined });
+    const order = ['stremio', 'livetv', 'ps5', 'bbciplayer', 'stvplayer', 'itvx', 'ch4', 'ch5'];
+    check('Fresh Home uses the requested order', same((await state()).dock, order));
+    for (const layout of ['list', 'dock']) {
+      await look({ layout });
+      check(layout + ' retains all eight shortcuts', same((await state()).dock, order));
+      await current.screenshot({ path: out + 'requested-home-' + layout + '.png' });
+    }
+    await current.reload(); await ready();
+    check('Requested order survives reload', same((await state()).dock, order));
+  });
   await run('Legacy preference migration', async () => {
     for (const theme of ['list', 'shore', 'grid']) {
       await page({ seed: baseline({ theme, dock: ['youtube', 'netflix'], wallpaper: walls[1].id, lastApp: 'youtube', mode: '15' }) });
