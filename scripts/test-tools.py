@@ -14,6 +14,7 @@ import zipfile
 from font_assets import write_widget_archive
 from local_config import ROOT, load_settings, manifest_identity, override_identity, read_password
 import package
+from samsung_api import load_host, validate_host
 from private_files import check_signed_widget, check_widget, generated_path, private_path, secret_content
 
 
@@ -36,6 +37,55 @@ class ToolTests(unittest.TestCase):
         path.write_bytes(value)
         path.chmod(mode)
         return path
+
+    def test_fixed_samsung_target_keeps_exact_origin_identity_and_source(self):
+        source = (ROOT / 'app/device.js').read_bytes()
+        (self.root / 'app/device.js').write_bytes(source)
+        manifest = (self.root / 'app/config.xml').read_bytes()
+        identity = {'package_id': 'AbCdEf1234', 'app_id': 'AbCdEf1234.MyHome'}
+        output = self.root / 'fixed.wgt'
+        write_widget_archive(output, root=self.root, include_private=False, identity=identity,
+                             samsung_api_host='192.0.2.55')
+        with zipfile.ZipFile(output) as archive:
+            generated = archive.read('config.xml')
+            runtime = archive.read('device.js')
+            self.assertEqual(manifest_identity(generated), identity)
+            self.assertIn(b'<access origin="http://192.0.2.55:8001" subdomains="false"/>', generated)
+            self.assertNotIn(b'origin="*"', generated)
+            self.assertNotIn(b'privilege/system', generated)
+            self.assertNotIn(b'127.0.0.1:8001', runtime)
+            self.assertIn(b"BBC_ORIGIN = 'http://192.0.2.55:8001'", runtime)
+            self.assertFalse(any('.local' in name or 'samsung-api.json' in name for name in archive.namelist()))
+        self.assertEqual((self.root / 'app/device.js').read_bytes(), source)
+        self.assertEqual((self.root / 'app/config.xml').read_bytes(), manifest)
+
+    def test_fixed_samsung_target_rejects_broad_or_injected_hosts_before_writing(self):
+        output = self.root / 'retained.wgt'
+        output.write_bytes(b'previous successful build')
+        for host in ['*', 'example.com', 'http://192.0.2.55', '192.0.2.55:8001', '192.0.2.55/path',
+                     '127.0.0.1', '0.0.0.0', '224.0.0.1', '255.255.255.255', '::1', 123, None]:
+            with self.subTest(host=host), self.assertRaises(ValueError):
+                validate_host(host)
+        with self.assertRaises(ValueError):
+            write_widget_archive(output, root=self.root, samsung_api_host='*')
+        self.assertEqual(output.read_bytes(), b'previous successful build')
+
+    def test_samsung_settings_are_opt_in_and_never_read_by_public_export(self):
+        path = self.root / '.local/samsung-api.json'
+        self.assertIsNone(load_host(self.root))
+        path.write_text(json.dumps({'host': '192.0.2.55'}))
+        self.assertEqual(load_host(self.root), '192.0.2.55')
+        for content in ['{invalid', '[]', '{"host":"*"}', '{"host":"192.0.2.55","extra":true}']:
+            path.write_text(content)
+            with self.assertRaises(ValueError):
+                load_host(self.root)
+        write_widget_archive(self.root / 'public.wgt', root=self.root, include_private=False)
+        with zipfile.ZipFile(self.root / 'public.wgt') as archive:
+            self.assertIn(b'origin="http://127.0.0.1:8001"', archive.read('config.xml'))
+        path.rename(path.with_suffix('.saved'))
+        path.symlink_to(path.with_suffix('.saved'))
+        with self.assertRaises(ValueError):
+            load_host(self.root)
 
     def test_existing_identity_and_sdk_defaults(self):
         settings = load_settings(self.root)
@@ -203,6 +253,8 @@ class ToolTests(unittest.TestCase):
                 check_signed_widget(output, selected)
 
     def test_fake_sdk_saved_profile_and_password_modes(self):
+        (self.root / 'app/device.js').write_bytes((ROOT / 'app/device.js').read_bytes())
+        (self.root / '.local/samsung-api.json').write_text(json.dumps({'host': '192.0.2.55'}))
         cli = self.root / '.local/sdk/tools/ide/bin/tizen'
         cli.parent.mkdir(parents=True)
         cli.write_text('#!' + sys.executable + '\n' + '''
@@ -248,6 +300,9 @@ with zipfile.ZipFile(target, 'a') as archive:
                 package.main(self.root)
             self.assertNotIn('synthetic secret', output.getvalue())
             target = self.root / 'dist/CleanFrame.wgt'
+            with zipfile.ZipFile(target) as archive:
+                self.assertIn(b'origin="http://192.0.2.55:8001"', archive.read('config.xml'))
+                self.assertIn(b"BBC_ORIGIN = 'http://192.0.2.55:8001'", archive.read('device.js'))
             baseline = target.read_bytes()
             (cli.parent / 'mismatch').write_text('Synthetic identity mismatch')
             with self.assertRaisesRegex(ValueError, 'identity differs'):
@@ -272,7 +327,7 @@ with zipfile.ZipFile(target, 'a') as archive:
             self.assertEqual(manifest_identity(archive.read('config.xml')), identity)
 
     def test_public_check_reads_index_and_history(self):
-        for name in ['scripts/check-public.py', 'scripts/font_assets.py', 'scripts/local_config.py', 'scripts/private_files.py',
+        for name in ['scripts/check-public.py', 'scripts/font_assets.py', 'scripts/local_config.py', 'scripts/private_files.py', 'scripts/samsung_api.py',
                      'app/assets/fonts/SOURCES.json', 'app/assets/manrope.woff2', 'app/assets/manrope-OFL.txt',
                      'app/assets/fonts/geist/OFL.txt', 'app/assets/fonts/newsreader/OFL.txt']:
             target = self.root / name

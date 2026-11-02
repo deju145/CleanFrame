@@ -112,10 +112,12 @@
     try { api().launch(id, function () { finish(null); }, function (err) { finish(failure(err)); }); }
     catch (err) { finish(failure(err)); }
   }
-  var BBC_URL = 'http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid';
+  // Packaging can replace this one origin using ignored .local/samsung-api.json.
+  var BBC_ORIGIN = 'http://127.0.0.1:8001';
+  var BBC_URL = BBC_ORIGIN + '/api/v2/applications/DqEoaplKlw.bbchybrid';
   var lastBBCPolicy = '';
   if (typeof window.addEventListener === 'function') window.addEventListener('securitypolicyviolation', function (event) {
-    if (typeof event.blockedURI === 'string' && event.blockedURI.indexOf('http://127.0.0.1:8001') === 0) {
+    if (typeof event.blockedURI === 'string' && event.blockedURI.indexOf(BBC_ORIGIN) === 0) {
       lastBBCPolicy = event.effectiveDirective || event.violatedDirective || 'network policy';
     }
   });
@@ -125,7 +127,7 @@
     lastBBCPolicy = '';
     function detail(note) {
       var location = window.location || {};
-      return 'Samsung API: 127.0.0.1:8001. Origin: ' + (location.origin || 'unknown')
+      return 'Samsung API: ' + BBC_ORIGIN + '. Origin: ' + (location.origin || 'unknown')
         + '; protocol: ' + (location.protocol || 'unknown') + '. ' + note
         + (lastBBCPolicy ? ' Browser blocked: ' + lastBBCPolicy + '.' : '');
     }

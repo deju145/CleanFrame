@@ -12,6 +12,7 @@ import zipfile
 from font_assets import write_widget_archive
 from local_config import ROOT, load_settings, read_password
 from private_files import check_signed_widget
+from samsung_api import load_host
 
 
 def sign(command, password=None, timeout=60):
@@ -90,7 +91,7 @@ def main(root=ROOT):
     dist = root / 'dist'
     dist.mkdir(exist_ok=True)
     unsigned = dist / 'CleanFrame-unsigned.wgt'
-    write_widget_archive(unsigned, root=root, identity=settings['identity'])
+    write_widget_archive(unsigned, root=root, identity=settings['identity'], samsung_api_host=load_host(root))
     # A fresh folder prevents a previous signed widget masking a failed build.
     signed_dir = Path(tempfile.mkdtemp(prefix='signed-', dir=dist))
     command = [str(cli), 'package', '-t', 'wgt', '-s', settings['profile'], '-o', str(signed_dir), '--', str(unsigned)]
