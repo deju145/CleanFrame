@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 
 const source = readFileSync(new URL('../app/device.js', import.meta.url), 'utf8');
-function harness(tvwindow) {
+function harness() {
   let now = 0, next = 0;
   const timers = new Map(), requests = [], launches = [];
   const application = {
@@ -13,10 +13,7 @@ function harness(tvwindow) {
     getAppsInfo: (ok, fail) => requests.push({ ok, fail }),
     launch: (id, ok, fail) => launches.push({ id, ok, fail })
   };
-  const sourceRequests = [];
-  const window = { tizen: { application, tvwindow, systeminfo: {
-    getPropertyValue: (name, ok, fail) => sourceRequests.push({ name, ok, fail })
-  } } };
+  const window = { tizen: { application } };
   vm.runInNewContext(source, {
     window, tizen: window.tizen,
     setTimeout: (callback, delay) => { const id = ++next; timers.set(id, { callback, at: now + delay }); return id; },
@@ -26,7 +23,7 @@ function harness(tvwindow) {
     now += ms;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   }
-  return { device: window.FrameDevice, requests, launches, sourceRequests, advance };
+  return { device: window.FrameDevice, requests, launches, advance };
 }
 
 test('a 500-app catalogue can arrive after the old eight-second deadline', () => {
@@ -82,78 +79,3 @@ test('launch keeps its eight-second deadline independently of discovery', () => 
   h.launches[0].ok();
   assert.equal(results.length, 1);
 });
-
-test('a package prefix resolves to the installed application ID', () => {
-  const h = harness(), results = [];
-  h.device.launchApp('DqEoaplKlw', error => results.push(error));
-  h.requests[0].ok([{ id: 'DqEoaplKlw.ActualRegionalApp', name: 'BBC iPlayer' }]);
-  assert.equal(h.launches[0].id, 'DqEoaplKlw.ActualRegionalApp');
-  h.launches[0].ok();
-  assert.deepEqual(results, [null]);
-});
-
-test('missing and ambiguous packages never launch an arbitrary app', () => {
-  for (const list of [[], [{ id: 'DqEoaplKlw.One' }, { id: 'DqEoaplKlw.Two' }]]) {
-    const h = harness(), results = [];
-    h.device.launchApp('DqEoaplKlw', error => results.push(error));
-    h.requests[0].ok(list);
-    assert.equal(h.launches.length, 0);
-    assert.equal(results.length, 1);
-    assert.ok(results[0].message);
-  }
-});
-
-test('late package discovery cannot launch after timeout', () => {
-  const h = harness(), results = [];
-  h.device.launchApp('DqEoaplKlw', error => results.push(error));
-  h.advance(8000);
-  h.requests[0].ok([{ id: 'DqEoaplKlw.Player' }]);
-  assert.equal(h.launches.length, 0);
-  assert.equal(results.length, 1);
-});
-
-test('UK package prefixes are recognised in the installed catalogue', () => {
-  const h = harness();
-  let apps;
-  h.device.apps((err, value) => { assert.equal(err, null); apps = value; });
-  h.requests[0].ok([{ id: 'DqEoaplKlw.Player', name: 'BBC iPlayer', show: false }]);
-  assert.equal(apps[0].brand, 'bbciplayer');
-});
-
-test('HDMI 5 selects the reported port, shows fullscreen and returns on close', () => {
-  const calls = [], source = { type: 'HDMI', number: 5 };
-  const h = harness({
-    setSource: (value, ok) => { assert.equal(value, source); calls.push('source'); ok(); },
-    show: (ok, fail, rect, window, position) => {
-      assert.equal(Array.from(rect).join(','), '0%,0%,100%,100%');
-      assert.equal(window, 'MAIN'); assert.equal(position, 'FRONT'); calls.push('show'); ok();
-    },
-    hide: ok => { calls.push('hide'); ok(); }
-  });
-  h.device.input(5, err => assert.equal(err, null));
-  assert.equal(h.sourceRequests[0].name, 'VIDEOSOURCE');
-  h.sourceRequests[0].ok({ connected: [{ type: 'HDMI', number: 4 }, source] });
-  assert.equal(h.device.inputActive(), true);
-  h.device.closeInput(err => assert.equal(err, null));
-  assert.equal(h.device.inputActive(), false);
-  assert.deepEqual(calls, ['source', 'show', 'hide']);
-});
-
-test('an absent HDMI port does not select another source', () => {
-  const h = harness({ setSource: () => assert.fail('Unexpected source switch') });
-  let error;
-  h.device.input(5, err => { error = err; });
-  h.sourceRequests[0].ok({ connected: [{ type: 'HDMI', number: 4 }] });
-  assert.match(error.message, /HDMI 5 is not available/);
-  assert.equal(h.device.inputActive(), false);
-});
-
-test('source discovery arriving after timeout cannot switch inputs', () => {
-  const h = harness({ setSource: () => assert.fail('Late source switch') });
-  let count = 0;
-  h.device.input(5, () => { count++; });
-  h.advance(8000);
-  h.sourceRequests[0].ok({ connected: [{ type: 'HDMI', number: 5 }] });
-  assert.equal(count, 1);
-});
-

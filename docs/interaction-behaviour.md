@@ -33,9 +33,7 @@ The selected font applies to Home app names, the clock and Home controls, includ
 
 ## Streaming apps
 
-This fork starts with Stremio, LIVE TV (HDMI 4), PS5 (HDMI 5), BBC iPlayer, STV Player, itvX, Ch4 and Ch5, in that order. The order is applied once using a saved preset marker; appearance is preserved, and later rearrangements remain saved. Streaming package prefixes resolve to an unambiguous installed native application ID before launch. Missing or ambiguous packages show an error. The original streaming apps remain available through installed-app discovery.
-
-The HDMI shortcuts enumerate connected `VIDEOSOURCE` entries and select the exact HDMI port number through the public TVWindow API. They show the source fullscreen in front of CleanFrame; Back hides the video window and returns to Home. An absent port shows an error instead of selecting another input. These routes need physical verification on the user's TV, especially HDMI 5; no input is assumed merely because a shortcut exists. Other installed consumer apps can also be added to Home. Launching uses the public `tizen.application.launch` API with the app's native ID. Missing apps and denied launches produce a real error. No web player, placeholder success page or account credential is embedded.
+The nine default apps keep their known native IDs. Other installed consumer apps can also be added to Home. Launching uses the public `tizen.application.launch` API with the app's native ID. Missing apps and denied launches produce a real error. No web player, placeholder success page or account credential is embedded.
 
 ## All apps
 
