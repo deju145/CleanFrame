@@ -47,7 +47,7 @@
   var LOOK_VALUES = { bg: ['dark', 'light', 'photo'], layout: ['list', 'dock'], apps: ['icons', 'both', 'text'], font: Object.keys(FONTS).filter(function (id) { return id === 'manrope' || PRIVATE_FONTS.indexOf(id) >= 0; }), controls: ['icons', 'both', 'text'], focus: ['type', 'glass'], material: ['soft', 'frost', 'tint'] };
   var LOOK_NAMES = { bg: 'Background', layout: 'Layout', apps: 'Apps', font: 'Font', controls: 'Home controls', focus: 'Focus', material: 'Material' };
   var VALUE_NAMES = { dark: 'Dark', light: 'Light', photo: 'Photo', list: 'List', dock: 'Dock', type: 'Type', glass: 'Glass', soft: 'Soft', frost: 'Frost', tint: 'Clear tint', icons: 'Icons', both: 'Icons and text', text: 'Text' };
-  var UTIL = { art: ['Art Mode', 'art'], apps: ['All apps', 'apps'], arrange: ['Arrange', 'arrange'], settings: ['Settings', 'settings'] };
+  var UTIL = { art: ['Art Mode', 'art'], apps: ['All apps', 'apps'], sources: ['Sources', 'tv'], arrange: ['Arrange', 'arrange'], settings: ['Settings', 'settings'] };
   var MSG = {
     leave: { title: 'Leave Home?', line: 'Open Samsung Home?', note: '', actions: [['stay', 'Stay'], ['samsung', 'Samsung Home']] }
   };
@@ -491,7 +491,7 @@
   }
 
   /* ---------- Navigation targets ---------- */
-  function utils() { return ['art', 'apps', 'settings']; }
+  function utils() { return ['art', 'apps', 'sources', 'settings']; }
   /* prev/next run along the apps; out goes to the controls, inn comes back (or to a per-app action). */
   function axes() {
     var v = S.c.layout === 'list';
@@ -500,6 +500,7 @@
   function utilAction(u) {
     if (u === 'art') perform('Art Mode', FrameDevice.art);
     else if (u === 'apps') openApps();
+    else if (u === 'sources') push({ id: 'sources', f: { i: 0 } });
     else openSettings();
   }
   function addAppsRoute() { openEditor('home'); }
@@ -824,6 +825,20 @@
       { id: 'samsung', label: 'Samsung', value: 'Home and TV settings' }];
   }
   function settingsIds() { return settingsRows().map(function (r) { return r.id; }); }
+  V.sources = {
+    sheet: true,
+    norm: function (t) { t.f.i = clamp(t.f.i, 0, 4); },
+    key: function (t, k) {
+      if (k === 'up') t.f.i = Math.max(0, t.f.i - 1);
+      else if (k === 'down') t.f.i = Math.min(4, t.f.i + 1);
+      else if (k === 'back') pop();
+      else if (k === 'ok') {
+        var number = t.f.i + 1;
+        perform('HDMI ' + number, function (done) { FrameDevice.input(number, done); });
+      }
+    },
+    point: function (t, z, i) { if (z === 'row') { t.f.i = clamp(i, 0, 4); this.key(t, 'ok'); } }
+  };
   V.settings = {
     sheet: true,
     norm: function (t) { var ids = settingsIds(); if (ids.indexOf(t.f.id) < 0) t.f.id = ids[0]; },
@@ -1512,6 +1527,7 @@
         + '<div class="ed-home" data-slot="home"></div><div class="ed-order-break" data-slot="break">Then scroll</div><div class="ed-other-view" data-slot="ov"><div class="ed-other" data-slot="other"></div></div><div class="ed-origin" data-slot="origin"></div>'
         + '<div class="row-cue editor-before" data-slot="otherBefore" aria-hidden="true">' + icon('up') + '</div><div class="row-cue editor-after" data-slot="otherAfter" aria-hidden="true">' + icon('down') + '</div>';
     },
+    sources: function () { return '<h2 class="s-title">Sources</h2><div class="settings-overview" data-slot="list"></div><p class="settings-overview-hint">Choose HDMI 1–5. Back returns to CleanFrame.</p>'; },
     settings: function () { return '<h2 class="s-title">Settings</h2><div class="settings-overview" data-slot="list"></div><p class="settings-overview-hint"><span class="remote-key">OK</span><span>Open selected group</span></p>'; },
     message: function (t) {
       var m = messageContent(t);
@@ -1602,6 +1618,13 @@
       el.ov.className = 'ed-other-view';
       el.otherBefore.className = 'row-cue editor-before' + (before ? ' is-on' : '');
       el.otherAfter.className = 'row-cue editor-after' + (afterRows ? ' is-on' : '');
+    },
+    sources: function (t, el) {
+      var html = '', i;
+      for (i = 0; i < 5; i++) {
+        html += '<button type="button" tabindex="-1" class="settings-group' + (i === t.f.i ? ' is-focus' : '') + '" data-z="row" data-i="' + i + '" data-action="source.hdmi' + (i + 1) + '"><span class="settings-group-copy"><span class="settings-group-name">HDMI ' + (i + 1) + '</span><span class="settings-group-value">Open connected input</span></span>' + icon('right') + '</button>';
+      }
+      setHTML(el.list, html);
     },
     settings: function (t, el) {
       var html = '';
@@ -1835,6 +1858,14 @@
   var heldKeys = {};
   document.addEventListener('keydown', function (ev) {
     var code = ev.keyCode, k = KEYS[code];
+    if (FrameDevice.inputActive()) {
+      ev.preventDefault();
+      if (k === 'back' && !ev.repeat && !heldKeys[code]) {
+        heldKeys[code] = true;
+        perform('Return to Sources', FrameDevice.closeInput);
+      }
+      return;
+    }
     if (code === 9) { ev.preventDefault(); return; }
     if (!k || ev.metaKey || ev.ctrlKey || ev.altKey) return;
     ev.preventDefault();

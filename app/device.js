@@ -85,5 +85,41 @@
       }, function (err) { finish(failure(err)); });
     } catch (err) { finish(failure(err)); }
   }
-  window.FrameDevice = { launch: launch, launchApp: launchApp, art: art, home: home, settings: settings, apps: apps };
+  var showingInput = false;
+  function inputActive() { return showingInput; }
+  function closeInput(done) {
+    if (!window.tizen || !tizen.tvwindow) { unavailable(done); return; }
+    var finish = bounded(done);
+    try {
+      tizen.tvwindow.hide(function () { showingInput = false; finish(null); }, function (err) { finish(failure(err)); }, 'MAIN');
+    } catch (err) { finish(failure(err)); }
+  }
+  function input(number, done) {
+    if (!window.tizen || !tizen.systeminfo || !tizen.tvwindow) { unavailable(done); return; }
+    var active = true;
+    var finish = bounded(function (err) { active = false; done(err); });
+    function failed(err) { if (active) finish(failure(err)); }
+    try {
+      tizen.systeminfo.getPropertyValue('VIDEOSOURCE', function (info) {
+        if (!active) return;
+        var sources = (info.connected || []).filter(function (source) { return source.type === 'HDMI' && Number(source.number) === number; });
+        if (sources.length !== 1) {
+          finish({ message: 'HDMI ' + number + ' is not available.', detail: 'Check the cable, device power and physical HDMI port number.' });
+          return;
+        }
+        try {
+          tizen.tvwindow.setSource(sources[0], function () {
+            if (!active) return;
+            try {
+              tizen.tvwindow.show(function () {
+                showingInput = true;
+                if (active) finish(null);
+              }, failed, ['0%', '0%', '100%', '100%'], 'MAIN', 'FRONT');
+            } catch (err) { failed(err); }
+          }, failed, 'MAIN');
+        } catch (err) { failed(err); }
+      }, failed);
+    } catch (err) { failed(err); }
+  }
+  window.FrameDevice = { input: input, inputActive: inputActive, closeInput: closeInput, launch: launch, launchApp: launchApp, art: art, home: home, settings: settings, apps: apps };
 }());

@@ -35,6 +35,10 @@ The selected font applies to Home app names, the clock and Home controls, includ
 
 The nine default apps keep their known native IDs. Other installed consumer apps can also be added to Home. Launching uses the public `tizen.application.launch` API with the app's native ID. Missing apps and denied launches produce a real error. No web player, placeholder success page or account credential is embedded.
 
+## Sources
+
+Sources joins Art Mode, All apps and Settings in the Home controls (top right in Dock; bottom right in List). Its five rows select HDMI 1–5 using the public Tizen VIDEOSOURCE and TVWindow APIs, without root or Vetro. Up/Down chooses a port; OK selects it and shows its video fullscreen. Back hides the video and returns to the Sources panel; another Back returns Home. Missing or disconnected ports show an error, with no fallback to a different port. The TV must expose a requested number; including HDMI 5 in the menu does not establish that the hardware provides it. Actual picture, sound and remote behaviour require physical TV testing.
+
 ## All apps
 
 The panel reads `tizen.application.getAppsInfo` on entry and shows the filtered consumer apps alphabetically. Samsung's visibility flag alone also exposes system utilities, so EP packages, background services, ad players, account utilities, placeholders and duplicates are omitted. Known brands use bundled marks. Other apps use their local installed icon, with initials as a fallback.

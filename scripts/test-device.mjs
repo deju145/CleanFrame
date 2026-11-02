@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 
 const source = readFileSync(new URL('../app/device.js', import.meta.url), 'utf8');
-function harness() {
+function harness(tvwindow) {
   let now = 0, next = 0;
   const timers = new Map(), requests = [], launches = [], controls = [];
   const application = {
@@ -14,7 +14,8 @@ function harness() {
     launch: (id, ok, fail) => launches.push({ id, ok, fail }),
     launchAppControl: (control, id, ok, fail) => controls.push({ control, id, ok, fail })
   };
-  const window = { tizen: { application, ApplicationControl: function(operation) { this.operation = operation; } } };
+  const sourceRequests = [];
+  const window = { tizen: { application, tvwindow, systeminfo: {getPropertyValue: (name, ok, fail) => sourceRequests.push({name, ok, fail})}, ApplicationControl: function(operation) { this.operation = operation; } } };
   vm.runInNewContext(source, {
     window, tizen: window.tizen,
     setTimeout: (callback, delay) => { const id = ++next; timers.set(id, { callback, at: now + delay }); return id; },
@@ -24,7 +25,7 @@ function harness() {
     now += ms;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   }
-  return { device: window.FrameDevice, requests, launches, controls, advance };
+  return { device: window.FrameDevice, requests, launches, controls, sourceRequests, advance };
 }
 
 test('a 500-app catalogue can arrive after the old eight-second deadline', () => {
@@ -103,4 +104,71 @@ test('BBC app-control errors are reported and late success cannot hide a timeout
   failed.device.launchApp('DqEoaplKlw.bbchybrid', value => { error = value; });
   failed.controls[0].fail({message: 'Launch denied'});
   assert.equal(error.detail, 'Launch denied');
+});
+
+test('HDMI 5 selects the reported port, shows fullscreen and returns on close', () => {
+  const calls = [], source = { type: 'HDMI', number: 5 };
+  const h = harness({
+    setSource: (value, ok) => { assert.equal(value, source); calls.push('source'); ok(); },
+    show: (ok, fail, rect, window, position) => {
+      assert.equal(Array.from(rect).join(','), '0%,0%,100%,100%');
+      assert.equal(window, 'MAIN'); assert.equal(position, 'FRONT'); calls.push('show'); ok();
+    },
+    hide: ok => { calls.push('hide'); ok(); }
+  });
+  h.device.input(5, err => assert.equal(err, null));
+  assert.equal(h.sourceRequests[0].name, 'VIDEOSOURCE');
+  h.sourceRequests[0].ok({ connected: [{ type: 'HDMI', number: 4 }, source] });
+  assert.equal(h.device.inputActive(), true);
+  h.device.closeInput(err => assert.equal(err, null));
+  assert.equal(h.device.inputActive(), false);
+  assert.deepEqual(calls, ['source', 'show', 'hide']);
+});
+
+test('an absent HDMI port does not select another source', () => {
+  const h = harness({ setSource: () => assert.fail('Unexpected source switch') });
+  let error;
+  h.device.input(5, err => { error = err; });
+  h.sourceRequests[0].ok({ connected: [{ type: 'HDMI', number: 4 }] });
+  assert.match(error.message, /HDMI 5 is not available/);
+  assert.equal(h.device.inputActive(), false);
+});
+
+test('source discovery arriving after timeout cannot switch inputs', () => {
+  const h = harness({ setSource: () => assert.fail('Late source switch') });
+  let count = 0;
+  h.device.input(5, () => { count++; });
+  h.advance(8000);
+  h.sourceRequests[0].ok({ connected: [{ type: 'HDMI', number: 5 }] });
+  assert.equal(count, 1);
+});
+
+
+function sourcesPanel() {
+  const main = readFileSync(new URL('../app/main.js', import.meta.url), 'utf8');
+  const code = main.slice(main.indexOf('  V.sources = {'), main.indexOf('  V.settings = {'));
+  const launches = [], context = {V: {}, popped: 0,
+    clamp: (v, min, max) => Math.max(min, Math.min(v, max)),
+    pop: () => { context.popped++; }, perform: (title, run) => run(() => {}),
+    FrameDevice: {input: (number, done) => { launches.push(number); done(null); }}
+  };
+  vm.runInNewContext(code, context);
+  return {panel: context.V.sources, context, launches};
+}
+test('Sources focus is bounded and only OK switches a port', () => {
+  const h = sourcesPanel(), state = {f: {i: 0}};
+  for (let i=0; i<8; i++) h.panel.key(state, 'down');
+  assert.equal(state.f.i, 4);
+  assert.deepEqual(h.launches, []);
+  h.panel.key(state, 'ok');
+  assert.deepEqual(h.launches, [5]);
+  for (let i=0; i<8; i++) h.panel.key(state, 'up');
+  assert.equal(state.f.i, 0);
+  h.panel.key(state, 'back');
+  assert.equal(h.context.popped, 1);
+});
+test('Sources pointer selection uses the selected HDMI number', () => {
+  const h = sourcesPanel(), state = {f: {i: 0}};
+  h.panel.point(state, 'row', 3);
+  assert.deepEqual(h.launches, [4]);
 });

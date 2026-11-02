@@ -214,6 +214,21 @@ async function noLiveFilters() {
 
 try {
   preview = await openPreview();
+  await run('Sources panel navigation', async () => {
+    await page();
+    for (const layout of ['dock', 'list']) {
+      await look({ layout }); await scene('home'); await act('util.sources');
+      check(layout + ' opens Sources', (await state()).view === 'sources');
+      check('Five labelled HDMI rows', await current.locator('[data-action^="source.hdmi"]').count() === 5);
+      await nav('down', 'down', 'down', 'down', 'down');
+      check('Focus stops at HDMI 5', (await state()).focusAction === 'source.hdmi5');
+      await nav('up'); check('Up reaches HDMI 4', (await state()).focusAction === 'source.hdmi4');
+      await nav('back'); check('Back returns Home', (await state()).view === 'home');
+    }
+    await current.screenshot({path: out + 'sources-home.png'});
+    await act('util.sources');
+    await current.screenshot({path: out + 'sources-panel.png'});
+  });
   await run('Legacy preference migration', async () => {
     for (const theme of ['list', 'shore', 'grid']) {
       await page({ seed: baseline({ theme, dock: ['youtube', 'netflix'], wallpaper: walls[1].id, lastApp: 'youtube', mode: '15' }) });
@@ -348,7 +363,7 @@ try {
         check(layout + '/' + controls + ' uses spacing between visible children at ' + width,
           spacing.length === 3 && spacing.every(s => s.children === (controls === 'both' ? 2 : 1) && Math.abs(s.extraWidth - s.gap) < .5), spacing);
         const focused = [];
-        for (let i = 0; i < 3; i++) {
+        for (let i = 0; i < 4; i++) {
           if (i) await nav(layout === 'dock' ? 'right' : 'down');
           focused.push(await current.evaluate(() => {
             const button = document.querySelector('#utils .u.is-focus'), lens = document.querySelector('.ut-lens.is-current');
