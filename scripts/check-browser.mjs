@@ -77,30 +77,13 @@ function installHarness({ seed, legacy, mock, catalog, minuteMs, catalogFailure,
   if (noFontAPI) Object.defineProperty(document, 'fonts', { configurable: true, value: undefined });
   if (!mock) return;
   window.__tv = { catalog, catalogFailure: !!catalogFailure, launchFailure: false, holdCatalog: false, pending: [], calls: [], catalogCalls: 0 };
-  __tv.remoteMode = 'success'; __tv.remoteSockets = []; __tv.remoteFrames = [];
-  window.WebSocket = function (url) {
-    const socket=this;socket.url=url;socket.closed=false;__tv.remoteSockets.push(socket);
-    const mode=__tv.remoteMode;
-    setTimeout(()=>{
-      if(socket.closed)return;
-      if(mode==='network'){if(socket.onerror)socket.onerror({});return;}
-      if(mode==='hold')return;
-      const event=mode==='denied'?'ms.channel.unauthorized':'ms.channel.connect';
-      if(socket.onmessage)socket.onmessage({data:JSON.stringify({event,data:{token:'qa-remote-token'}})});
-    },20);
-  };
-  window.WebSocket.prototype.close=function(){this.closed=true;};
-  window.WebSocket.prototype.send=function(text){
-    const frame=JSON.parse(text);__tv.remoteFrames.push(frame);
-    if(frame.params.event==='ed.installedApp.get')setTimeout(()=>{
-      if(!this.closed && this.onmessage)this.onmessage({data:JSON.stringify({event:'ed.installedApp.get',data:{data:[{appId:'320BBCQA',name:'BBC iPlayer',app_type:2}]}})});
-    },0);
-  };
+  __tv.metadataCalls=[];__tv.hbbtvLink='https://www.live.bbctvapps.co.uk/tap/iplayer_@FHD';
   window.tizen = {
     ApplicationControlData: function (key, value) { this.key = key; this.value = value; },
     ApplicationControl: function (operation, uri, mime, category, data) { Object.assign(this, { operation, uri, mime, category, data }); },
     application: {
       getCurrentApplication() { return { appInfo: { id: currentAppId || 'nClrkHome1.FrameHome' } }; },
+      getAppMetaData(id) { __tv.metadataCalls.push(id); return id==='DqEoaplKlw.bbchybrid' && __tv.hbbtvLink ? [{key:'http://samsung.com/tv/metadata/hbbtv.link',value:__tv.hbbtvLink}] : []; },
       getAppsInfo(ok, fail) {
         const tv = window.__tv;
         tv.catalogCalls++;
@@ -263,7 +246,7 @@ try {
     await act('input.5'); await current.waitForFunction(()=>__tv.calls.some(c=>c.id==='org.tizen.tv-viewer'));
     check('Sources selects sleeping HDMI 5 through native viewer',await current.evaluate(()=>__tv.calls[0].method==='setSource' && __tv.calls[0].number===5 && __tv.calls[1].id==='org.tizen.tv-viewer'));
   });
-  await run('Fork saved UK dock and direct Samsung launch integration', async () => {
+  await run('Fork saved UK dock and metadata-based HbbTV launch', async () => {
     const pins=[{id:'stremio',appId:'IkWsFHtOY9.Stremio',name:'Stremio'},
       {id:'DqEoaplKlw.bbchybrid',appId:'DqEoaplKlw.bbchybrid',name:'BBC iPlayer'},
       {id:'OCaxbgg9v6.chfourctv',appId:'OCaxbgg9v6.chfourctv',name:'Channel 4'},
@@ -277,33 +260,28 @@ try {
     check('Saved UK dock has no coloured native artwork',await current.locator('#dock [data-native-icon]').count()===0);
     await current.screenshot({path:out+'uk-monochrome-dock.png'});
     await act('home.app.DqEoaplKlw.bbchybrid');
-    await current.waitForFunction(()=>__tv.remoteFrames.some(frame=>frame.params.event==='ed.apps.launch'));
-    await current.waitForTimeout(550);
-    const remote=await current.evaluate(()=>({url:__tv.remoteSockets[0].url,frames:__tv.remoteFrames,calls:__tv.calls,token:JSON.parse(localStorage.getItem('cleanframe.samsung.remote.v1'))}));
-    check('BBC uses Samsung WebSocket and no native application launch',remote.url.startsWith('ws://127.0.0.1:8001/') && remote.calls.length===0);
-    check('BBC launches only the discovered remote app ID',remote.frames.filter(frame=>frame.params.event==='ed.apps.launch').length===1 && remote.frames[1].params.data.appId==='320BBCQA');
-    check('Samsung authorization is saved inside the widget',remote.token.token==='qa-remote-token');
-    await current.evaluate(()=>{__tv.remoteMode='denied';window.dispatchEvent(new Event('focus'));});
+    await current.waitForFunction(()=>__tv.calls.some(call=>call.method==='launchAppControl'));
+    await current.waitForTimeout(30);
+    const handoff=await current.evaluate(()=>__tv.calls[0]);
+    check('BBC targets the shared HbbTV host',handoff.method==='launchAppControl' && handoff.id==='org.tizen.hbbtv');
+    check('BBC sends installed URL and wrapper identity',same(handoff.control.data,[{key:'tizenid',value:['DqEoaplKlw.bbchybrid']},{key:'hbbtv',value:['https://www.live.bbctvapps.co.uk/tap/iplayer_@FHD']},{key:'deeplink',value:['true']}]));
+    await current.evaluate(()=>{__tv.launchFailure=true;window.dispatchEvent(new Event('focus'));});
     await scene('home');await act('home.app.DqEoaplKlw.bbchybrid');
     await current.waitForFunction(()=>ShoreQA.state().view==='message');
-    const denial=await current.locator('#stage').innerText();
-    check('Samsung pairing denial gives a visible error',denial.includes('Samsung denied remote access'));
-    check('Denied token is removed',await current.evaluate(()=>localStorage.getItem('cleanframe.samsung.remote.v1')===null));
-    await current.screenshot({path:out+'bbc-remote-authorization.png'});
+    check('HbbTV rejection is visible',(await current.locator('#stage').innerText()).includes('Screen unavailable for QA'));
+    check('HbbTV rejection never retries the wrapper',await current.evaluate(()=>__tv.calls.length===2 && __tv.calls.every(call=>call.id==='org.tizen.hbbtv')));
+    await current.screenshot({path:out+'bbc-hbbtv-error.png'});
     await nav('back');await editor();await remove('cleanframe.hdmi5');
     await current.reload();await ready();
     check('Removed input stays removed after restart',!(await state()).dock.includes('cleanframe.hdmi5'));
   });
-  await run('Fork BBC remote connection and cancellation', async () => {
+  await run('Fork HbbTV metadata fallback preserves normal launch', async () => {
     const id='DqEoaplKlw.bbchybrid';
     await page({seed:baseline({dock:[id],appRecords:[{id,appId:id,name:'BBC iPlayer'}],lastApp:id})});
-    await current.evaluate(()=>{__tv.remoteMode='network';});
-    await act('home.app.'+id);await current.waitForFunction(()=>ShoreQA.state().view==='message');
-    check('Remote transport failure identifies the stage',(await current.locator('#stage').innerText()).includes('Stage: authorization'));
-    check('Remote failures do not use native launch',await current.evaluate(()=>__tv.calls.length===0));
-    await nav('back');await scene('home');await current.evaluate(()=>{__tv.remoteMode='hold';});
-    await act('home.app.'+id);await nav('back');
-    check('Back cancels pending authorization',await current.evaluate(()=>__tv.remoteSockets[1].closed && __tv.remoteFrames.length===0));
+    await current.evaluate(()=>{__tv.hbbtvLink='';});
+    await act('home.app.'+id);await current.waitForFunction(()=>__tv.calls.length===1);
+    check('Missing metadata retains the regular wrapper launch',await current.evaluate(()=>__tv.calls[0].method==='launch' && __tv.calls[0].id==='DqEoaplKlw.bbchybrid'));
+    check('Metadata lookup uses the selected installed identity',await current.evaluate(()=>__tv.metadataCalls[0]==='DqEoaplKlw.bbchybrid'));
   });
   await run('Utility focus clears the app highlight', async () => {
     await page();

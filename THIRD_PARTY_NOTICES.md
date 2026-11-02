@@ -28,6 +28,10 @@ The fifteen photo pages were individually checked on 20 October 2026. Each displ
 
 Photographers retain their rights. Wallpapers, thumbnails, panel backgrounds and material fields derive from the credited photographs and retain their terms. The Unsplash licence permits copying, modification and distribution subject to its restrictions, including on selling unmodified images and building a competing image service.
 
+## HbbTV launch handoff
+
+The installed-metadata lookup and shared-host handoff are adapted from [AeroTizen PR #1](https://github.com/helalaou/AeroTizen/pull/1), specifically commit `e65a5311b032b5af3a6bc0a6e89155770eb29552` (`launcher/js/apps.js` and `launcher/js/config.js`). Copyright (c) 2026 Hamza El Alaoui, MIT License. The full notice is bundled at `app/licenses/AeroTizen-LICENSE.txt`. AeroTizen’s watcher and native Home setup are not included.
+
 ## Development dependencies and exports
 
 Development dependencies retain the licences in their npm packages. They are not copied into the TV JavaScript runtime.

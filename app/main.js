@@ -455,7 +455,7 @@
   }
   function perform(title, run) {
     if (busy) return;
-    busy = true; busyTimer = setTimeout(release, 40000);
+    busy = true; busyTimer = setTimeout(release, 10000);
     run(function (err) {
       release();
       if (err) message(title, err.message || 'The TV could not open this screen.', err.detail || '');
@@ -504,7 +504,6 @@
     return { prev: v ? 'up' : 'left', next: v ? 'down' : 'right', out: v ? 'right' : 'up', inn: v ? 'left' : 'down' };
   }
   function utilAction(u) {
-    FrameDevice.cancelLaunch();
     if (u === 'art') perform('Art Mode', FrameDevice.art);
     else if (u === 'apps') openApps();
     else if (u === 'sources') openInputs('home');
@@ -998,7 +997,6 @@
   /* ---------- Dispatch ---------- */
   function norm() { var t = top(), v = V[t.id]; if (v.norm) v.norm(t); }
   function press(k) {
-    if (k === 'back') FrameDevice.cancelLaunch();
     norm();
     var t = top();
     V[t.id].key(t, k);

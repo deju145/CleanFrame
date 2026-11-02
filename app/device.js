@@ -1,4 +1,4 @@
-/* Tizen APIs and the TV-local Samsung app endpoint. No external server or credentials. */
+/* Public Tizen app and HbbTV controls. No network controller or credentials. */
 (function () {
   'use strict';
   var IDS = {
@@ -104,112 +104,35 @@
       } catch (error) { finish(failure(error)); }
     });
   }
+  // HbbTV handoff follows AeroTizen PR #1; retained MIT notice: licenses/AeroTizen-LICENSE.txt.
+  function hbbtvLink(id) {
+    try {
+      if (typeof api().getAppMetaData !== 'function') return '';
+      var metadata = api().getAppMetaData(id), i, item;
+      if (!Array.isArray(metadata)) return '';
+      for (i = 0; i < metadata.length; i++) {
+        item = metadata[i];
+        if (item && item.key === 'http://samsung.com/tv/metadata/hbbtv.link'
+          && typeof item.value === 'string' && item.value.trim()) return item.value;
+      }
+    } catch (err) { /* Metadata may be unavailable on older TVs; retain ordinary launch. */ }
+    return '';
+  }
   function launchApp(id, done) {
-    cancelLaunch();
     if (id === 'cleanframe.hdmi4' || id === 'cleanframe.hdmi5') { setSource(Number(id.slice(-1)), done); return; }
     if (!api()) { unavailable(done); return; }
-    var finish = bounded(done, id === 'DqEoaplKlw.bbchybrid' ? 40000 : 8000);
-    if (id === 'DqEoaplKlw.bbchybrid') { launchBBC(finish); return; }
-    try { api().launch(id, function () { finish(null); }, function (err) { finish(failure(err)); }); }
-    catch (err) { finish(failure(err)); }
-  }
-  // Packaging can replace this one origin using ignored .local/samsung-api.json.
-  var BBC_ORIGIN = 'http://127.0.0.1:8001';
-  var bbcCancel = null;
-  function cancelLaunch() { if (bbcCancel) bbcCancel(); }
-  function launchBBC(done) {
-    cancelLaunch();
-    if (!window.WebSocket) { done({message: 'Samsung remote connection is unavailable.'}); return; }
-    var socket = null, finished = false, approved = false, requested = false, sent = false;
-    var phase = 'authorization', saved = null, token = '', key = 'cleanframe.samsung.remote.v1';
-    var completeTimer = 0, deadline = setTimeout(function () {
-      finish({message: 'Samsung remote request timed out.', detail: context('Allow CleanFrame on the TV if a permission prompt appears.')});
-    }, 35000);
-    function context(note) { return 'Samsung remote: ' + BBC_ORIGIN.replace(/^http:/, 'ws:') + '. Stage: ' + phase + '. ' + note; }
-    function finish(error) {
-      if (finished) return;
-      finished = true; clearTimeout(deadline); clearTimeout(completeTimer);
-      if (bbcCancel === cancel) bbcCancel = null;
-      if (socket) {
-        socket.onopen = socket.onmessage = socket.onerror = socket.onclose = null;
-        try { socket.close(); } catch (err) { /* The connection may already be closed. */ }
-      }
-      done(error);
-    }
-    function cancel() { finish(null); }
-    bbcCancel = cancel;
-    function fail(message) { finish({message: message, detail: context('No automatic retry was made.')}); }
-    function validToken(value) { return typeof value === 'string' && /^[A-Za-z0-9_-]{1,512}$/.test(value); }
+    var finish = bounded(done), link = hbbtvLink(id);
     try {
-      saved = JSON.parse(window.localStorage.getItem(key));
-      if (saved && saved.origin === BBC_ORIGIN && validToken(saved.token)) token = saved.token;
-    } catch (err) { /* A missing or unreadable saved token starts a fresh authorization request. */ }
-    function send(event, data) {
-      var params = {event: event, to: 'host'};
-      if (data) params.data = data;
-      socket.send(JSON.stringify({method: 'ms.channel.emit', params: params}));
-    }
-    function launchFromList(data) {
-      if (!approved || !requested || sent || finished) return;
-      try { if (typeof data === 'string') data = JSON.parse(data); } catch (err) { fail('Samsung returned an unreadable app list.'); return; }
-      var list = Array.isArray(data) ? data : data && data.data;
-      if (!Array.isArray(list)) { fail('Samsung returned an unreadable app list.'); return; }
-      var exact = [], named = [];
-      list.forEach(function (app) {
-        if (!app || typeof app !== 'object') return;
-        var id = app.appId || app.app_id;
-        if (typeof id !== 'string' && typeof id !== 'number') return;
-        id = String(id);
-        if (!/^[A-Za-z0-9_.-]{1,128}$/.test(id)) return;
-        var record = {id: id, type: Number(app.app_type)};
-        if (id === 'DqEoaplKlw.bbchybrid') exact.push(record);
-        else if (typeof app.name === 'string' && app.name.toLowerCase().replace(/[^a-z0-9]/g, '') === 'bbciplayer') named.push(record);
-      });
-      var matches = exact.length ? exact : named;
-      if (matches.length !== 1) { fail('Samsung remote did not identify one BBC iPlayer app.'); return; }
-      sent = true; phase = 'launch submission';
-      try {
-        send('ed.apps.launch', {action_type: matches[0].type === 2 ? 'DEEP_LINK' : 'NATIVE_LAUNCH', appId: matches[0].id, metaTag: ''});
-        // Submission is not proof of visible startup; leave time for an immediate error.
-        completeTimer = setTimeout(function () { finish(null); }, 500);
-      } catch (err) { fail('Samsung remote could not send the BBC launch.'); }
-    }
-    try {
-      var address = BBC_ORIGIN.replace(/^http:/, 'ws:') + '/api/v2/channels/samsung.remote.control?name=Q2xlYW5GcmFtZQ%3D%3D';
-      if (token) address += '&token=' + encodeURIComponent(token);
-      socket = new window.WebSocket(address);
-      socket.onmessage = function (event) {
-        if (finished) return;
-        var message;
-        try { message = JSON.parse(event.data); } catch (err) { return; }
-        if (!message || typeof message !== 'object') return;
-        if (message.event === 'ms.channel.unauthorized') {
-          try {
-            var stored = JSON.parse(window.localStorage.getItem(key));
-            if (stored && stored.origin === BBC_ORIGIN) window.localStorage.removeItem(key);
-          } catch (err) { /* Failure to clear storage must not hide the authorization denial. */ }
-          fail('Samsung denied remote access. Allow CleanFrame in the TV device connection settings.');
-        } else if (message.event === 'ms.channel.connect') {
-          if (approved) return;
-          var nextToken = message.data && message.data.token;
-          if (typeof nextToken === 'number') nextToken = String(nextToken);
-          if (nextToken !== undefined && nextToken !== null) {
-            if (!validToken(nextToken)) { fail('Samsung returned an invalid authorization token.'); return; }
-            try { window.localStorage.setItem(key, JSON.stringify({origin: BBC_ORIGIN, token: nextToken})); }
-            catch (err) { fail('CleanFrame could not save Samsung remote authorization.'); return; }
-          }
-          approved = true; requested = true; phase = 'app discovery';
-          try { send('ed.installedApp.get'); } catch (err) { fail('Samsung remote could not request its app list.'); }
-        } else if (message.event === 'ed.installedApp.get') launchFromList(message.data);
-        else if (message.event === 'ms.error' || message.event === 'ms.channel.error') fail('Samsung remote reported an error.');
-      };
-      socket.onerror = function () { if (!finished) fail('Samsung remote connection failed.'); };
-      socket.onclose = function (event) {
-        if (finished) return;
-        if (sent && event.code === 1000) finish(null);
-        else fail('Samsung remote closed before the request completed.');
-      };
-    } catch (err) { fail('Samsung remote connection could not start.'); }
+      if (link) {
+        var data = [
+          new tizen.ApplicationControlData('tizenid', [id]),
+          new tizen.ApplicationControlData('hbbtv', [link]),
+          new tizen.ApplicationControlData('deeplink', ['true'])
+        ];
+        var control = new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/default', null, null, null, data);
+        api().launchAppControl(control, 'org.tizen.hbbtv', function () { finish(null); }, function (err) { finish(failure(err)); });
+      } else api().launch(id, function () { finish(null); }, function (err) { finish(failure(err)); });
+    } catch (err) { finish(failure(err)); }
   }
   function launch(brand, done) {
     if (!IDS[brand]) { done({message: 'This app has no launch target.'}); return; }
@@ -249,5 +172,5 @@
       }, function (err) { finish(failure(err)); });
     } catch (err) { finish(failure(err)); }
   }
-  window.FrameDevice = { brandForApp: brandForApp, launch: launch, launchApp: launchApp, art: art, home: home, settings: settings, apps: apps, sources: sources, setSource: setSource, cancelSource: cancelSource, cancelLaunch: cancelLaunch };
+  window.FrameDevice = { brandForApp: brandForApp, launch: launch, launchApp: launchApp, art: art, home: home, settings: settings, apps: apps, sources: sources, setSource: setSource, cancelSource: cancelSource };
 }());
