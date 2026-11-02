@@ -37,7 +37,7 @@ test('a 500-app catalogue can arrive after the old eight-second deadline', () =>
   h.requests[0].ok(Array.from({ length: 500 }, (_, i) => ({ id: 'App' + String(i).padStart(7, '0') + '.Consumer', name: 'App ' + i, show: true })));
   assert.equal(results.length, 1);
   assert.equal(results[0].error, null);
-  assert.equal(results[0].apps.length, 500);
+  assert.equal(results[0].apps.length, 502);
 });
 
 test('catalogue timeout and late callbacks finish only once', () => {
@@ -66,7 +66,7 @@ test('regional streaming apps stay distinct and system helpers stay hidden', () 
     { id: 'd0m1lV1nt2.emanual', name: 'User Guide', show: true },
     { id: 'Hidden1234.Consumer', name: 'Hidden app', show: false }
   ]);
-  assert.equal(apps.length, 3);
+  assert.equal(apps.length, 5);
   assert.equal(apps.find(a => a.name === 'YouTube').brand, 'youtube');
   assert.equal(apps.find(a => a.name === 'YouTube TV').brand, '');
   assert.equal(apps.find(a => a.name === 'HBO Max').brand, 'hbomax');
@@ -171,4 +171,20 @@ test('Sources pointer selection uses the selected HDMI number', () => {
   const h = sourcesPanel(), state = {f: {i: 0}};
   h.panel.point(state, 'row', 3);
   assert.deepEqual(h.launches, [4]);
+});
+
+test('UK package variants resolve to monochrome marks without discovery', () => {
+  const h = harness();
+  for (const [id, brand] of [
+    ['IkWsFHtOY9.Stremio','stremio'], ['DqEoaplKlw.bbchybrid','bbciplayer'],
+    ['OCaxbgg9v6.chfourctv','channel4'], ['OEvCiupaFR.ITVHub','itvx'], ['OfLpiC2MZQ.Player','stv']
+  ]) assert.equal(h.device.brandForApp({appId:id}),brand);
+  assert.equal(h.device.brandForApp({appId:'Unrelated1.Player'}),'');
+});
+test('LIVE TV dock shortcut selects HDMI 4 without launching an app', () => {
+  const h = harness({setSource: (source, ok) => { assert.equal(source.number,4); ok(); },show: ok => ok()});
+  let result = 'pending';
+  h.device.launchApp('cleanframe.hdmi4', err => {result=err;});
+  h.sourceRequests[0].ok({connected:[{type:'HDMI',number:4}]});
+  assert.equal(result,null); assert.equal(h.launches.length,0);
 });

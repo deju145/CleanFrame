@@ -21,6 +21,14 @@
     'd0m1lV1nt2.emanual', '2022ePop01.SmartTV',
     'ZODRT12q2l.WebAccountExtension', 'ByJlgt0XeD.CastSettingsApp', 'tv6pbVMQFF.PrivacyChoices'];
   var SELF = 'nClrkHome1.FrameHome';
+  var BRAND_PACKAGES = {IkWsFHtOY9: 'stremio', DqEoaplKlw: 'bbciplayer', OCaxbgg9v6: 'channel4', OEvCiupaFR: 'itvx', OfLpiC2MZQ: 'stv'};
+  function brandForApp(a) {
+    var id = a.appId || a.id || '', prefix = id.split('.')[0], brand = BRAND_PACKAGES[prefix];
+    if (brand) return brand;
+    var keys = Object.keys(IDS), i;
+    for (i = 0; i < keys.length; i++) if (IDS[keys[i]] === id) return keys[i];
+    return EXTRA_BRANDS[id] || '';
+  }
   function api() { return window.tizen && window.tizen.application; }
   function selfId() {
     try { return api().getCurrentApplication().appInfo.id || SELF; }
@@ -38,6 +46,7 @@
     return finish;
   }
   function launchApp(id, done) {
+    if (id === 'cleanframe.hdmi4' || id === 'cleanframe.hdmi5') { input(Number(id.slice(-1)), done); return; }
     if (!api()) { unavailable(done); return; }
     var finish = bounded(done);
     try {
@@ -69,18 +78,19 @@
     var finish = bounded(done, 20000);
     try {
       api().getAppsInfo(function (list) {
-        var known = {}, seen = {}, result = [], self = selfId();
-        Object.keys(IDS).forEach(function (brand) { known[IDS[brand]] = brand; });
+        var seen = {}, result = [], self = selfId();
         list.forEach(function (a) {
-          var primary = !!known[a.id], stream = STREAMING.indexOf(a.id) >= 0;
+          var brand = brandForApp(a), primary = !!brand, stream = STREAMING.indexOf(a.id) >= 0;
           var consumer = /^[A-Za-z0-9]{10}\.[A-Za-z0-9_-]+$/.test(a.id) || CONSUMER_SYSTEM.indexOf(a.id) >= 0;
           if (a.id === self || INTERNAL.indexOf(a.id) >= 0 || seen[a.id] || !a.name || (!primary && !stream && (!a.show || !consumer))) return;
           if (!primary && /(?:service|worker|preview|promotion|plugin|launcher|test|sdk|^ep[ -]|factory|daemon)/i.test(a.name + ' ' + a.id)) return;
           if (/-dummy$/.test(a.id) || a.id === 'com.samsung.tv.cobalt-yt') return;
           seen[a.id] = true;
-          result.push({ appId: a.id, name: a.name, brand: known[a.id] || EXTRA_BRANDS[a.id] || '', icon: a.iconPath || '', rank: primary ? Object.keys(IDS).indexOf(known[a.id]) : (stream ? 20 : 30) });
+          result.push({ appId: a.id, name: a.name, brand: brand, icon: a.iconPath || '', rank: primary ? Math.max(0, Object.keys(IDS).indexOf(brand)) : (stream ? 20 : 30) });
         });
         result.sort(function (a, b) { return a.rank - b.rank || a.name.toLowerCase().localeCompare(b.name.toLowerCase()); });
+        result.push({appId: 'cleanframe.hdmi4', name: 'LIVE TV', brand: 'livetv', icon: '', rank: 40});
+        result.push({appId: 'cleanframe.hdmi5', name: 'PS5', brand: 'ps5', icon: '', rank: 41});
         finish(null, result);
       }, function (err) { finish(failure(err)); });
     } catch (err) { finish(failure(err)); }
@@ -121,5 +131,5 @@
       }, failed);
     } catch (err) { failed(err); }
   }
-  window.FrameDevice = { input: input, inputActive: inputActive, closeInput: closeInput, launch: launch, launchApp: launchApp, art: art, home: home, settings: settings, apps: apps };
+  window.FrameDevice = { brandForApp: brandForApp, input: input, inputActive: inputActive, closeInput: closeInput, launch: launch, launchApp: launchApp, art: art, home: home, settings: settings, apps: apps };
 }());

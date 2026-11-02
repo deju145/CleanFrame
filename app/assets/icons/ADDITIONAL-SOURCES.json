@@ -16,5 +16,43 @@
     "source": "https://github.com/simple-icons/simple-icons/blob/develop/icons/tubi.svg",
     "licence": "CC0-1.0",
     "note": "Shape unchanged; white fill for launcher."
+  },
+  {
+    "icon": "bbciplayer",
+    "source": "https://github.com/elax46/custom-brand-icons/blob/main/icon-svg/bbc.svg",
+    "blob_sha": "dcfa17fdcda829479a5c55a66b1ba22a812a4a1f",
+    "licence": "MIT",
+    "note": "Shape unchanged; white fill. BBC block mark identifies BBC iPlayer."
+  },
+  {
+    "icon": "channel4",
+    "source": "https://github.com/elax46/custom-brand-icons/blob/main/icon-svg/channel-4-uk.svg",
+    "blob_sha": "18c8c64976e9f1ed04b08e235f82be78d069de92",
+    "licence": "MIT",
+    "note": "Shape unchanged; white fill. BBC block mark identifies BBC iPlayer."
+  },
+  {
+    "icon": "itvx",
+    "source": "https://github.com/elax46/custom-brand-icons/blob/main/icon-svg/itvx.svg",
+    "blob_sha": "2774bfaa6292bcc15c1fe26cf94e5bd040a7fbc0",
+    "licence": "MIT",
+    "note": "Shape unchanged; white fill. BBC block mark identifies BBC iPlayer."
+  },
+  {
+    "icon": "ps5",
+    "source": "https://github.com/elax46/custom-brand-icons/blob/main/icon-svg/playstation-5.svg",
+    "blob_sha": "bb094bc4b9e1595b307c1d6eb4151814836c2cf0",
+    "licence": "MIT",
+    "note": "Shape unchanged; white fill. BBC block mark identifies BBC iPlayer."
+  },
+  {
+    "icon": "stv",
+    "licence": "MIT",
+    "note": "Original neutral STV letter monogram, not a reproduction of STV's official logo."
+  },
+  {
+    "icon": "livetv",
+    "licence": "MIT",
+    "note": "Original screen/play outline."
   }
 ]
