@@ -40,7 +40,12 @@
   function launchApp(id, done) {
     if (!api()) { unavailable(done); return; }
     var finish = bounded(done);
-    try { api().launch(id, function () { finish(null); }, function (err) { finish(failure(err)); }); }
+    try {
+      if (id === 'DqEoaplKlw.bbchybrid') {
+        var control = new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/default', null, null, null);
+        api().launchAppControl(control, id, function () { finish(null); }, function (err) { finish(failure(err)); });
+      } else api().launch(id, function () { finish(null); }, function (err) { finish(failure(err)); });
+    }
     catch (err) { finish(failure(err)); }
   }
   function launch(brand, done) {

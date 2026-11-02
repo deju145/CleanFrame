@@ -7,13 +7,14 @@ import test from 'node:test';
 const source = readFileSync(new URL('../app/device.js', import.meta.url), 'utf8');
 function harness() {
   let now = 0, next = 0;
-  const timers = new Map(), requests = [], launches = [];
+  const timers = new Map(), requests = [], launches = [], controls = [];
   const application = {
     getCurrentApplication: () => ({ appInfo: { id: 'Owner12345.Home' } }),
     getAppsInfo: (ok, fail) => requests.push({ ok, fail }),
-    launch: (id, ok, fail) => launches.push({ id, ok, fail })
+    launch: (id, ok, fail) => launches.push({ id, ok, fail }),
+    launchAppControl: (control, id, ok, fail) => controls.push({ control, id, ok, fail })
   };
-  const window = { tizen: { application } };
+  const window = { tizen: { application, ApplicationControl: function(operation) { this.operation = operation; } } };
   vm.runInNewContext(source, {
     window, tizen: window.tizen,
     setTimeout: (callback, delay) => { const id = ++next; timers.set(id, { callback, at: now + delay }); return id; },
@@ -23,7 +24,7 @@ function harness() {
     now += ms;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   }
-  return { device: window.FrameDevice, requests, launches, advance };
+  return { device: window.FrameDevice, requests, launches, controls, advance };
 }
 
 test('a 500-app catalogue can arrive after the old eight-second deadline', () => {
@@ -78,4 +79,28 @@ test('launch keeps its eight-second deadline independently of discovery', () => 
   assert.match(results[0].message, /did not respond/);
   h.launches[0].ok();
   assert.equal(results.length, 1);
+});
+
+test('BBC iPlayer uses a default app control with the exact native ID', () => {
+  const h = harness(), results = [];
+  h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
+  assert.equal(h.launches.length, 0);
+  assert.equal(h.controls.length, 1);
+  assert.equal(h.controls[0].id, 'DqEoaplKlw.bbchybrid');
+  assert.equal(h.controls[0].control.operation, 'http://tizen.org/appcontrol/operation/default');
+  h.controls[0].ok();
+  assert.deepEqual(results, [null]);
+});
+test('BBC app-control errors are reported and late success cannot hide a timeout', () => {
+  const h = harness(), results = [];
+  h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
+  h.advance(8000);
+  h.controls[0].ok();
+  assert.equal(results.length, 1);
+  assert.match(results[0].message, /did not respond/);
+  const failed = harness();
+  let error;
+  failed.device.launchApp('DqEoaplKlw.bbchybrid', value => { error = value; });
+  failed.controls[0].fail({message: 'Launch denied'});
+  assert.equal(error.detail, 'Launch denied');
 });
