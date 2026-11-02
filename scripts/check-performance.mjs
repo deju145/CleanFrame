@@ -112,11 +112,11 @@ try {
   await look({ layout: 'dock' });
   await sample('Photo Dock navigation', ['right', 'right', 'right', 'left', 'left', 'left']);
   await call('nav', 'up');
-  await sample('Dock utilities', ['right', 'right', 'left', 'left']);
+  await sample('Dock utilities', ['right', 'right', 'right', 'left', 'left', 'left']);
   await scene('settings');
   await sample('Settings navigation', ['down', 'down', 'up', 'up']);
   await scene('apps');
-  check('Performance inventory includes 23 real-adapter rows', (await call('state')).catalog.ids.length === 23);
+  check('Performance inventory includes 23 apps and two input shortcuts', (await call('state')).catalog.ids.length === 25);
   await sample('All Apps grid navigation', ['down', 'down', 'right', 'up', 'up', 'left']);
   await scene('editor');
   await sample('Apps on Home navigation', ['down', 'down', 'down', 'up', 'up', 'up']);

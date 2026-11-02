@@ -27,7 +27,8 @@ export async function openPreview({ publicFonts = false } = {}) {
         if (match) { clearTimeout(timeout); resolve(match[0]); }
       });
     });
-    browser = await chromium.launch({ headless: true });
+    const executablePath = process.env.CLEANFRAME_CHROMIUM_EXECUTABLE;
+    browser = await chromium.launch({ headless: true, ...(executablePath ? { executablePath } : {}) });
     return { browser, baseURL, close: async () => {
       try { await browser.close(); }
       finally { server.kill(); await once(server, 'exit'); }

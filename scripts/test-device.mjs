@@ -5,21 +5,25 @@ import vm from 'node:vm';
 import test from 'node:test';
 
 const source = readFileSync(new URL('../app/device.js', import.meta.url), 'utf8');
-function harness(tvwindow) {
+function harness({ supported = true, throwSource = false } = {}) {
   let now = 0, next = 0;
-  const timers = new Map(), requests = [], launches = [], controls = [];
+  const timers = new Map(), requests = [], launches = [], sourceRequests = [], changes = [];
+  let current = { type: 'HDMI', number: 2 };
   const application = {
     getCurrentApplication: () => ({ appInfo: { id: 'Owner12345.Home' } }),
     getAppsInfo: (ok, fail) => requests.push({ ok, fail }),
-    launch: (id, ok, fail) => launches.push({ id, ok, fail }),
-    launchAppControl: (control, id, ok, fail) => controls.push({ control, id, ok, fail })
+    launch: (id, ok, fail) => launches.push({ id, ok, fail })
   };
-  const sourceRequests = [];
   const requestsHTTP = [];
   function XHR() { requestsHTTP.push(this); }
   XHR.prototype.open = function (method, url) { this.method = method; this.url = url; };
   XHR.prototype.send = function (body) { this.body = body; };
-  const window = { XMLHttpRequest: XHR, tizen: { application, tvwindow, systeminfo: {getPropertyValue: (name, ok, fail) => sourceRequests.push({name, ok, fail})}, ApplicationControl: function(operation) { this.operation = operation; } } };
+  const window = { XMLHttpRequest: XHR, tizen: { application } };
+  if (supported) {
+    window.tizen.systeminfo = { getPropertyValue: (name, ok, fail) => { assert.equal(name, 'VIDEOSOURCE'); sourceRequests.push({ ok, fail }); } };
+    window.tizen.tvwindow = { getSource: (...args) => { assert.equal(args.length, 0); return current; },
+      setSource: (source, ok, fail) => { if (throwSource) throw Error('Synthetic SDK failure'); changes.push({ source, ok, fail }); } };
+  }
   vm.runInNewContext(source, {
     window, tizen: window.tizen,
     setTimeout: (callback, delay) => { const id = ++next; timers.set(id, { callback, at: now + delay }); return id; },
@@ -29,7 +33,7 @@ function harness(tvwindow) {
     now += ms;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   }
-  return { device: window.FrameDevice, requests, launches, controls, sourceRequests, requestsHTTP, advance };
+  return { device: window.FrameDevice, requests, launches, sourceRequests, changes, requestsHTTP, advance, setCurrent: value => { current = value; } };
 }
 
 test('a 500-app catalogue can arrive after the old eight-second deadline', () => {
@@ -86,10 +90,86 @@ test('launch keeps its eight-second deadline independently of discovery', () => 
   assert.equal(results.length, 1);
 });
 
+const video = { connected: [{ type: 'HDMI', number: 2 }], disconnected: [{ type: 'HDMI', number: 1 }, { type: 'HDMI', number: 3 }] };
+test('inputs use actual connected and sleeping source records and synchronous active status', () => {
+  const h = harness(); let result;
+  h.device.sources((error, inputs) => { assert.equal(error, null); result = inputs; });
+  h.sourceRequests[0].ok({ connected: video.connected, disconnected: [...video.disconnected, { type: 'HDMI', number: 2 }, { type: 'TV', number: 0 }] });
+  assert.deepEqual(Array.from(result, x => x.number), [1, 2, 3]);
+  assert.equal(result.find(x => x.number === 2).active, true);
+  assert.equal(result.find(x => x.number === 2).connected, true);
+  assert.equal(result.find(x => x.number === 1).connected, false);
+});
+test('input absence, denial, empty discovery and timeout never invent ports', () => {
+  const absent = harness({ supported: false }); let error;
+  absent.device.sources(e => { error = e; }); assert.ok(error);
+  for (const mode of ['denied', 'empty', 'timeout']) {
+    const h = harness(), results = [];
+    h.device.sources((error, inputs) => results.push({ error, inputs }));
+    if (mode === 'denied') h.sourceRequests[0].fail({ name: 'SecurityError' });
+    else if (mode === 'empty') h.sourceRequests[0].ok({ connected: [], disconnected: [] });
+    else h.advance(8000);
+    assert.equal(results.length, 1);
+    if (mode === 'empty') assert.equal(results[0].inputs.length, 0);
+    else { assert.ok(results[0].error); assert.equal(results[0].inputs, undefined); }
+    h.sourceRequests[0].ok(video); assert.equal(results.length, 1);
+  }
+});
+test('input switching uses a discovered disconnected record and completes only after viewer launch', () => {
+  const h = harness(), results = [];
+  h.device.setSource(1, (error, input) => results.push({ error, input }));
+  h.sourceRequests[0].ok(video);
+  assert.equal(h.changes[0].source, video.disconnected[0]);
+  h.changes[0].ok(video.disconnected[0]); assert.equal(results.length, 0);
+  assert.equal(h.launches[0].id, 'org.tizen.tv-viewer');
+  h.launches[0].ok(); assert.equal(results[0].error, null);
+  assert.equal(results[0].input.number, 1);
+});
+test('source and viewer failures are errors and never hide the launcher', () => {
+  for (const mode of ['source', 'throw', 'viewer', 'different']) {
+    const h = harness({ throwSource: mode === 'throw' }), results = [];
+    h.device.setSource(2, error => results.push(error));
+    if (mode === 'throw') {
+      h.sourceRequests[0].ok(video);
+    } else {
+      h.sourceRequests[0].ok(video);
+      if (mode === 'source') h.changes[0].fail({ name: 'SecurityError' });
+      else if (mode === 'different') h.changes[0].ok({ type: 'HDMI', number: 3 });
+      else { h.changes[0].ok(video.connected[0]); h.launches[0].fail({ name: 'NotFoundError' }); }
+    }
+    assert.equal(results.length, 1); assert.ok(results[0]);
+    assert.equal(h.launches.length, mode === 'viewer' ? 1 : 0);
+  }
+});
+test('cancelled and timed-out input requests cannot initiate later device operations', () => {
+  for (const mode of ['timeout', 'cancel']) {
+    const h = harness(), results = [];
+    h.device.setSource(2, error => results.push(error));
+    if (mode === 'timeout') h.advance(8000); else h.device.cancelSource();
+    assert.equal(results.length, 1); assert.ok(results[0]);
+    h.sourceRequests[0].ok(video); assert.equal(h.changes.length, 0); assert.equal(h.launches.length, 0);
+    const pending = harness(); pending.device.setSource(2, () => {}); pending.sourceRequests[0].ok(video);
+    if (mode === 'timeout') pending.advance(8000); else pending.device.cancelSource();
+    pending.changes[0].ok(video.connected[0]); assert.equal(pending.launches.length, 0);
+  }
+});
+test('unknown and invalid ports cannot be substituted and a newer request cancels the old one', () => {
+  for (const port of [-1, 1.5, '2', Infinity, 4]) {
+    const h = harness(), results = []; h.device.setSource(port, error => results.push(error));
+    if (port === 4) h.sourceRequests[0].ok(video);
+    assert.equal(results.length, 1); assert.ok(results[0]); assert.equal(h.changes.length, 0);
+  }
+  const h = harness(), results = [];
+  h.device.setSource(1, error => results.push(error)); h.device.setSource(2, () => {});
+  assert.equal(results[0].cancelled, true);
+  h.sourceRequests[0].ok(video); assert.equal(h.changes.length, 0);
+  h.sourceRequests[1].ok(video); assert.equal(h.changes[0].source.number, 2);
+});
+
 test('BBC requests the fixed loopback relay rather than the public app API', () => {
   const h = harness(), results = [];
   h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
-  assert.equal(h.launches.length,0); assert.equal(h.controls.length,0);
+  assert.equal(h.launches.length,0);
   const xhr = h.requestsHTTP[0];
   assert.equal(xhr.method,'POST'); assert.equal(xhr.url,'http://127.0.0.1:8099/cleanframe/bbciplayer');
   xhr.status=200; xhr.responseText=JSON.stringify({ok:true,appId:'DqEoaplKlw.bbchybrid'}); xhr.onload();
@@ -114,72 +194,6 @@ test('BBC rejects an unverified relay response', () => {
   h.requestsHTTP[0].status=200; h.requestsHTTP[0].responseText='{}'; h.requestsHTTP[0].onload();
   assert.match(error.message,/did not confirm/);
 });
-test('HDMI 5 selects the reported port, shows fullscreen and returns on close', () => {
-  const calls = [], source = { type: 'HDMI', number: 5 };
-  const h = harness({
-    setSource: (value, ok) => { assert.equal(value, source); calls.push('source'); ok(); },
-    show: (ok, fail, rect, window, position) => {
-      assert.equal(Array.from(rect).join(','), '0%,0%,100%,100%');
-      assert.equal(window, 'MAIN'); assert.equal(position, 'FRONT'); calls.push('show'); ok();
-    },
-    hide: ok => { calls.push('hide'); ok(); }
-  });
-  h.device.input(5, err => assert.equal(err, null));
-  assert.equal(h.sourceRequests[0].name, 'VIDEOSOURCE');
-  h.sourceRequests[0].ok({ connected: [{ type: 'HDMI', number: 4 }, source] });
-  assert.equal(h.device.inputActive(), true);
-  h.device.closeInput(err => assert.equal(err, null));
-  assert.equal(h.device.inputActive(), false);
-  assert.deepEqual(calls, ['source', 'show', 'hide']);
-});
-
-test('an absent HDMI port does not select another source', () => {
-  const h = harness({ setSource: () => assert.fail('Unexpected source switch') });
-  let error;
-  h.device.input(5, err => { error = err; });
-  h.sourceRequests[0].ok({ connected: [{ type: 'HDMI', number: 4 }] });
-  assert.match(error.message, /HDMI 5 is not available/);
-  assert.equal(h.device.inputActive(), false);
-});
-
-test('source discovery arriving after timeout cannot switch inputs', () => {
-  const h = harness({ setSource: () => assert.fail('Late source switch') });
-  let count = 0;
-  h.device.input(5, () => { count++; });
-  h.advance(8000);
-  h.sourceRequests[0].ok({ connected: [{ type: 'HDMI', number: 5 }] });
-  assert.equal(count, 1);
-});
-
-
-function sourcesPanel() {
-  const main = readFileSync(new URL('../app/main.js', import.meta.url), 'utf8');
-  const code = main.slice(main.indexOf('  V.sources = {'), main.indexOf('  V.settings = {'));
-  const launches = [], context = {V: {}, popped: 0,
-    clamp: (v, min, max) => Math.max(min, Math.min(v, max)),
-    pop: () => { context.popped++; }, perform: (title, run) => run(() => {}),
-    FrameDevice: {input: (number, done) => { launches.push(number); done(null); }}
-  };
-  vm.runInNewContext(code, context);
-  return {panel: context.V.sources, context, launches};
-}
-test('Sources focus is bounded and only OK switches a port', () => {
-  const h = sourcesPanel(), state = {f: {i: 0}};
-  for (let i=0; i<8; i++) h.panel.key(state, 'down');
-  assert.equal(state.f.i, 4);
-  assert.deepEqual(h.launches, []);
-  h.panel.key(state, 'ok');
-  assert.deepEqual(h.launches, [5]);
-  for (let i=0; i<8; i++) h.panel.key(state, 'up');
-  assert.equal(state.f.i, 0);
-  h.panel.key(state, 'back');
-  assert.equal(h.context.popped, 1);
-});
-test('Sources pointer selection uses the selected HDMI number', () => {
-  const h = sourcesPanel(), state = {f: {i: 0}};
-  h.panel.point(state, 'row', 3);
-  assert.deepEqual(h.launches, [4]);
-});
 
 test('UK package variants resolve to monochrome marks without discovery', () => {
   const h = harness();
@@ -189,10 +203,20 @@ test('UK package variants resolve to monochrome marks without discovery', () => 
   ]) assert.equal(h.device.brandForApp({appId:id}),brand);
   assert.equal(h.device.brandForApp({appId:'Unrelated1.Player'}),'');
 });
-test('LIVE TV dock shortcut selects HDMI 4 without launching an app', () => {
-  const h = harness({setSource: (source, ok) => { assert.equal(source.number,4); ok(); },show: ok => ok()});
-  let result = 'pending';
-  h.device.launchApp('cleanframe.hdmi4', err => {result=err;});
-  h.sourceRequests[0].ok({connected:[{type:'HDMI',number:4}]});
-  assert.equal(result,null); assert.equal(h.launches.length,0);
+
+test('dock HDMI shortcuts use the upstream sleeping-source and viewer route', () => {
+  for (const port of [4,5]) {
+    const h=harness(), results=[];
+    h.device.launchApp('cleanframe.hdmi'+port,(error,input)=>results.push({error,input}));
+    const sleeping={type:'HDMI',number:port};
+    h.sourceRequests[0].ok({connected:[],disconnected:[sleeping]});
+    assert.equal(h.changes[0].source,sleeping);
+    h.changes[0].ok(sleeping);assert.equal(h.launches[0].id,'org.tizen.tv-viewer');
+    h.launches[0].ok();assert.equal(results[0].error,null);
+  }
+});
+test('cancelled dock input shortcuts cannot switch later', () => {
+  const h=harness();h.device.launchApp('cleanframe.hdmi5',()=>{});h.device.cancelSource();
+  h.sourceRequests[0].ok({connected:[{type:'HDMI',number:5}]});
+  assert.equal(h.changes.length,0);assert.equal(h.launches.length,0);
 });

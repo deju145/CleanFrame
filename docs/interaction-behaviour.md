@@ -1,4 +1,4 @@
-# Interaction behaviour — 0.6.1
+# Interaction behaviour — 0.7.0
 
 ## Home
 
@@ -21,7 +21,7 @@ Settings opens a grouped overview: Background, Layout, Typography, Focus, Apps o
 | Typography | Manrope, Neue Montreal, Mori, Pangram Sans, Geist and Newsreader, when available |
 | Focus | Type or Glass; Soft, Frost or Clear tint material |
 | Apps on Home | Membership and arrangement editor |
-| Samsung | Samsung Home and TV settings |
+| Samsung | Samsung Home, TV settings and Inputs |
 
 Up/Down moves between rows. Left/Right moves between choices in a horizontal row. Focus alone changes neither the preview nor saved preferences in these appearance groups. Wallpaper has its own temporary photo preview, described below. OK applies the focused value. A checkmark identifies the applied value; the filled plate identifies remote focus. Applying the current value does not write again.
 
@@ -34,14 +34,6 @@ The selected font applies to Home app names, the clock and Home controls, includ
 ## Streaming apps
 
 The nine default apps keep their known native IDs. Other installed consumer apps can also be added to Home. Launching uses the public `tizen.application.launch` API with the app's native ID. Missing apps and denied launches produce a real error. No web player, placeholder success page or account credential is embedded.
-
-## Monochrome dock marks
-
-Stremio and the BBC iPlayer, Channel 4, itvX and STV package families use bundled monochrome artwork, including when restoring saved native app entries before discovery runs. STV uses an original neutral letter monogram. No grayscale filter is applied to rectangular installed-app artwork. LIVE TV and PS5 are also available in All apps as HDMI 4/5 shortcuts with monochrome marks. For an existing five-app dock containing exactly these streaming services, the two HDMI shortcuts are appended once if there is space; other saved arrangements are preserved. This does not change BBC iPlayer's launch compatibility.
-
-## Sources
-
-Sources joins Art Mode, All apps and Settings in the Home controls (top right in Dock; bottom right in List). Its five rows select HDMI 1–5 using the public Tizen VIDEOSOURCE and TVWindow APIs, without root or Vetro. Up/Down chooses a port; OK selects it and shows its video fullscreen. Back hides the video and returns to the Sources panel; another Back returns Home. Missing or disconnected ports show an error, with no fallback to a different port. The TV must expose a requested number; including HDMI 5 in the menu does not establish that the hardware provides it. Actual picture, sound and remote behaviour require physical TV testing.
 
 ## All apps
 
@@ -72,6 +64,14 @@ All calls have bounded response handling. A failure leaves CleanFrame usable. No
 
 Installed-app discovery allows up to 20 seconds for large TV catalogues; launch controls retain an 8-second limit. Opening All apps or the editor refreshes the catalogue while retaining saved Home choices. No discovery polling runs during hidden startup.
 
+## HDMI inputs
+
+Settings → Samsung → Inputs opens the HDMI chooser. The adapter reads the TV’s actual connected and disconnected source records, including sleeping devices that may be listed as disconnected. It does not guess a universal port count or add a fourth default Home control. Missing APIs, denied access and discovery failure produce an unavailable/error state rather than invented ports. The active source comes from the synchronous `tvwindow.getSource()` return value.
+
+Up/Down selects an input. OK requests that exact source; Back returns to Samsung Settings. Retry after a failed load rereads the available sources. A routing error remains an error, and a failed handoff leaves the launcher usable. Timed-out or cancelled requests cannot start a later routing or viewer action; a native request already sent to the TV may itself be uncancellable.
+
+Selecting a source, opening Samsung’s viewer, seeing the expected HDMI picture and waking a CEC device are separate results. The portable implementation does not import firmware-specific viewer payloads or claim to wake a sleeping device. No input discovery or polling runs during hidden startup.
+
 ## Preferences and wallpaper
 
 The launcher stores appearance, Home order, recently removed apps, the last launched Home app, wallpaper and rotation locally. List and Dock share these preferences. The existing `cleanframe.home.v1` key is retained, with a fallback read from `cleanframe.shore.v1`. Legacy List maps to Dark + List + Type; Glass Dock and Glass Grid map to Photo + Dock + Glass. App order, wallpaper, rotation and the last Home app are preserved.
@@ -96,3 +96,11 @@ Both layouts show the TV's local time in 12-hour format, without AM/PM or second
 Photographic materials and blurred panel backgrounds are generated before packaging and stay aligned with the full-screen image. Photo colour and contrast metadata are also prepared offline. Navigation does not sample image pixels, run an optics engine or apply live backdrop blur. Flat backgrounds use matching light or dark panel colours. Focus feedback uses transforms and opacity; reduced motion removes animated scaling and movement while retaining opacity feedback.
 
 Hidden prelaunch can install a fully loaded wallpaper bundle without waiting for an animation frame. A valid loaded image remains usable if detached-image decoding rejects. A failed startup bundle retries when the launcher becomes visible; an active wallpaper preview keeps its candidate. Font recovery clears fallback measurements and cached markup. This readiness fallback uses a completed load and nonzero image dimensions; it does not prove a TV has painted the image, and an accepted bundle is not automatically decoded again on return. These paths have browser regression coverage; physical cold-boot behaviour still needs owner observation.
+
+## Fork integration with v0.7.0
+
+The Home controls include Sources, which opens the same dynamically discovered input picker as Settings → Samsung → Inputs. Back returns to its entry point. LIVE TV and PS5 dock shortcuts select HDMI 4 and 5 through the upstream cancellation-aware source/viewer route, including disconnected inputs for sleeping devices. The old fullscreen TVWindow overlay and key interception are not retained. Availability, viewer handoff and CEC wake still need physical TV checks.
+
+The dock remembers the selected app without retaining its highlight while a Home utility has focus. Stremio, BBC iPlayer, Channel 4, itvX and STV package families use bundled monochrome marks. LIVE TV and PS5 have monochrome marks too. A matching five-app saved dock receives the two input shortcuts once; other arrangements and appearance settings are preserved.
+
+BBC iPlayer uses the TV-local endpoint in the custom Vetro build on this integration branch. It has no separate relay process or Mac startup command. It requires the custom Vetro service and its connected root agent. The manifest-based root-free experiment on main is not included because it failed on this TV. See BBC-IPLAYER-VETRO.md for preparation and signing requirements. Installation and successful physical launch remain unverified.

@@ -42,7 +42,7 @@ async function run(name, fn) {
 async function closePage() { if (current) { current.__closing = true; await current.close(); current = null; } }
 
 // Production still calls its unmodified device.js adapter.
-function installHarness({ seed, legacy, mock, catalog, minuteMs, catalogFailure, noFontAPI, storageFailure, currentAppId, initiallyHidden, pauseHiddenFrames, rejectDecode }) {
+function installHarness({ seed, legacy, mock, catalog, minuteMs, catalogFailure, noFontAPI, storageFailure, currentAppId, initiallyHidden, pauseHiddenFrames, rejectDecode, inputUnavailable }) {
   if (!sessionStorage.getItem('__cleanframe_seeded')) {
     if (seed !== undefined) localStorage.setItem('cleanframe.home.v1', typeof seed === 'string' ? seed : JSON.stringify(seed));
     if (legacy !== undefined) localStorage.setItem('cleanframe.shore.v1', typeof legacy === 'string' ? legacy : JSON.stringify(legacy));
@@ -98,6 +98,21 @@ function installHarness({ seed, legacy, mock, catalog, minuteMs, catalogFailure,
       }
     }
   };
+  if (!inputUnavailable) {
+    __tv.inputRequests = []; __tv.sourceFailure = false; __tv.currentInput = 2;
+    __tv.videoSources = { connected: [{ type: 'HDMI', number: 2 }], disconnected: [{ type: 'HDMI', number: 1 }, { type: 'HDMI', number: 3 }] };
+    tizen.systeminfo = { getPropertyValue(name, ok, fail) {
+      const finish = () => __tv.inputDiscoveryFailure ? fail({ name: 'SecurityError' }) : ok(__tv.videoSources);
+      if (__tv.holdInputs) __tv.inputRequests.push(finish); else setTimeout(finish, 0);
+    } };
+    tizen.tvwindow = {
+      getSource() { return { type: 'HDMI', number: __tv.currentInput }; },
+      setSource(source, ok, fail) {
+        __tv.calls.push({ method: 'setSource', number: source.number });
+        setTimeout(() => { if (__tv.sourceFailure) fail({ name: 'SecurityError' }); else { __tv.currentInput = source.number; ok(source); } }, 0);
+      }
+    };
+  }
 }
 async function page(options = {}, setup) {
   current = await preview.browser.newPage({ viewport: { width: 1920, height: 1080 } });
@@ -214,6 +229,52 @@ async function noLiveFilters() {
 
 try {
   preview = await openPreview();
+  await run('Fork Sources uses upstream input picker', async () => {
+    await page();
+    for (const width of [1920, 1280]) for (const layout of ['dock', 'list']) {
+      await current.setViewportSize({width,height:width*9/16}); await look({layout}); await scene('home');
+      await current.evaluate(() => { __tv.videoSources={connected:[{type:'HDMI',number:1},{type:'HDMI',number:2},{type:'HDMI',number:3}],disconnected:[{type:'HDMI',number:4},{type:'HDMI',number:5}]}; });
+      await act('util.sources'); await current.waitForSelector('[data-action="input.5"]');
+      check('Sources shares the five-port discovered picker '+layout+'/'+width,(await state()).settingsGroup==='inputs' && await current.locator('.section-inputs .setting-choice').count()===5);
+      check('Sources Back names Home '+layout+'/'+width,(await current.locator('#appearanceBack').innerText()).includes('Home'));
+      await current.screenshot({path:out+'sources-integrated-'+layout+'-'+width+'.png'});
+      await nav('back'); check('Sources Back restores Home '+layout+'/'+width,(await state()).view==='home');
+    }
+    await act('util.sources'); await current.waitForSelector('[data-action="input.5"]');
+    await act('input.5'); await current.waitForFunction(()=>__tv.calls.some(c=>c.id==='org.tizen.tv-viewer'));
+    check('Sources selects sleeping HDMI 5 through native viewer',await current.evaluate(()=>__tv.calls[0].method==='setSource' && __tv.calls[0].number===5 && __tv.calls[1].id==='org.tizen.tv-viewer'));
+  });
+  await run('Fork saved UK dock and Vetro launch integration', async () => {
+    const pins=[{id:'stremio',appId:'IkWsFHtOY9.Stremio',name:'Stremio'},
+      {id:'DqEoaplKlw.bbchybrid',appId:'DqEoaplKlw.bbchybrid',name:'BBC iPlayer'},
+      {id:'OCaxbgg9v6.chfourctv',appId:'OCaxbgg9v6.chfourctv',name:'Channel 4'},
+      {id:'OEvCiupaFR.ITVHub',appId:'OEvCiupaFR.ITVHub',name:'itvX'},
+      {id:'OfLpiC2MZQ.Player',appId:'OfLpiC2MZQ.Player',name:'STV Player'}];
+    let response={ok:true,appId:'DqEoaplKlw.bbchybrid'},status=200,requests=0;
+    await page({seed:baseline({dock:pins.map(a=>a.id),appRecords:pins,lastApp:'stremio'}),catalogFailure:true},async page=>{
+      await page.route('http://127.0.0.1:8099/cleanframe/bbciplayer',route=>{
+        requests++;return route.fulfill({status,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(response)});
+      });
+    });
+    const expected=pins.map(a=>a.id).concat('cleanframe.hdmi4','cleanframe.hdmi5');
+    check('Saved five-app dock gains input shortcuts once',same((await state()).dock,expected));
+    const marks=await current.locator('#dock .mark[data-mark]').evaluateAll(elements=>elements.map(e=>e.dataset.mark));
+    check('Saved UK and input pins all use bundled monochrome marks',same(marks,['stremio','bbciplayer','channel4','itvx','stv','livetv','ps5']),marks);
+    check('Saved UK dock has no coloured native artwork',await current.locator('#dock [data-native-icon]').count()===0);
+    await current.screenshot({path:out+'uk-monochrome-dock.png'});
+    const acknowledged=current.waitForResponse(r=>r.url()==='http://127.0.0.1:8099/cleanframe/bbciplayer' && r.status()===200);
+    await act('home.app.DqEoaplKlw.bbchybrid'); await acknowledged; await current.waitForLoadState('networkidle');
+    check('BBC sends the fixed TV-local request',requests===1 && await current.evaluate(()=>__tv.calls.length===0));
+    current.__expectedFailures.push('/cleanframe/bbciplayer');
+    status=503;response={error:'no root agent connected'};
+    await current.evaluate(()=>window.dispatchEvent(new Event('focus')));
+    await scene('home'); await act('home.app.DqEoaplKlw.bbchybrid');
+    await current.waitForFunction(()=>ShoreQA.state().view==='message');
+    check('Disconnected Vetro gives a visible error',(await current.locator('#stage').innerText()).includes('no root agent connected'));
+    await nav('back');await editor();await remove('cleanframe.hdmi5');
+    await current.reload();await ready();
+    check('Removed input stays removed after restart',!(await state()).dock.includes('cleanframe.hdmi5'));
+  });
   await run('Utility focus clears the app highlight', async () => {
     await page();
     for (const layout of ['dock', 'list']) {
@@ -222,28 +283,14 @@ try {
       await nav(layout === 'dock' ? 'up' : 'right');
       for (let i = 0; i < 4; i++) {
         check('Only utility is highlighted in ' + layout,
-          await current.locator('.tile.is-focus, .tile.is-sel, .ph-row.is-focus, .ph-row.is-sel, #plate.on-sel, .ph-plate.is-current.on-sel').count() === 0);
+          await current.locator('.tile.is-focus, .tile.is-sel, .ph-row.is-focus, .ph-row.is-sel, #plate.on-sel, .ph-plate.is-current.on-sel').evaluateAll(elements => elements.filter(e => e.getClientRects().length && getComputedStyle(e).visibility !== 'hidden').length) === 0);
         if (i < 3) await nav(layout === 'dock' ? 'right' : 'down');
       }
       await nav(layout === 'dock' ? 'down' : 'left');
       check('Returning restores remembered app in ' + layout, (await state()).selected === remembered);
     }
   });
-  await run('Sources panel navigation', async () => {
-    await page();
-    for (const layout of ['dock', 'list']) {
-      await look({ layout }); await scene('home'); await act('util.sources');
-      check(layout + ' opens Sources', (await state()).view === 'sources');
-      check('Five labelled HDMI rows', await current.locator('[data-action^="source.hdmi"]').count() === 5);
-      await nav('down', 'down', 'down', 'down', 'down');
-      check('Focus stops at HDMI 5', (await state()).focusAction === 'source.hdmi5');
-      await nav('up'); check('Up reaches HDMI 4', (await state()).focusAction === 'source.hdmi4');
-      await nav('back'); check('Back returns Home', (await state()).view === 'home');
-    }
-    await current.screenshot({path: out + 'sources-home.png'});
-    await act('util.sources');
-    await current.screenshot({path: out + 'sources-panel.png'});
-  });
+
   await run('Legacy preference migration', async () => {
     for (const theme of ['list', 'shore', 'grid']) {
       await page({ seed: baseline({ theme, dock: ['youtube', 'netflix'], wallpaper: walls[1].id, lastApp: 'youtube', mode: '15' }) });
@@ -376,7 +423,7 @@ try {
           });
         }, { layout, controls });
         check(layout + '/' + controls + ' uses spacing between visible children at ' + width,
-          spacing.length === 3 && spacing.every(s => s.children === (controls === 'both' ? 2 : 1) && Math.abs(s.extraWidth - s.gap) < .5), spacing);
+          spacing.length === 4 && spacing.every(s => s.children === (controls === 'both' ? 2 : 1) && Math.abs(s.extraWidth - s.gap) < .5), spacing);
         const focused = [];
         for (let i = 0; i < 4; i++) {
           if (i) await nav(layout === 'dock' ? 'right' : 'down');
@@ -426,10 +473,52 @@ try {
       check('Wallpaper name and count retain their separation at ' + width, Math.abs(caption - 24) < .5, caption);
     }
   });
+  await run('HDMI input chooser and recovery', async () => {
+    await page();
+    for (const width of [1920, 1280]) for (const layout of ['dock', 'list']) {
+      await current.setViewportSize({ width, height: width * 9 / 16 }); await look({ layout });
+      await group('samsung'); await act('samsung.inputs');
+      await current.waitForSelector('[data-action="input.1"]');
+      const entries = await current.locator('.section-inputs .setting-choice').allTextContents();
+      check('Inputs reflect actual ports and sleeping/active status ' + layout + '/' + width,
+        entries.length === 3 && entries.some(x => /HDMI 1.*Disconnected/.test(x)) && entries.some(x => /HDMI 2.*Active/.test(x)) && !entries.some(x => /HDMI 4/.test(x)), entries);
+      check('Inputs fit and retain one focus ' + layout + '/' + width, await current.locator('.section-inputs .setting-choice').evaluateAll(elements => {
+        const stage = document.getElementById('stage').getBoundingClientRect();
+        return ShoreQA.where().focusCount === 1 && elements.every(e => { const r=e.getBoundingClientRect(); return r.top>=stage.top && r.bottom<=stage.bottom && r.left>=stage.left && r.right<=stage.right; });
+      }));
+      await current.screenshot({ path: out + 'inputs-' + layout + '-' + width + '.png' });
+      await nav('back');
+      check('Inputs Back returns to Samsung entry ' + layout + '/' + width, (await state()).settingsGroup === 'samsung' && (await state()).focusAction === 'samsung.inputs');
+    }
+    await act('samsung.inputs'); await current.waitForSelector('[data-action="input.1"]');
+    await act('input.1'); await current.waitForFunction(() => __tv.calls.some(c => c.id === 'org.tizen.tv-viewer'));
+    check('Sleeping input selects its exact port before viewer handoff', await current.evaluate(() => __tv.calls[0].method === 'setSource' && __tv.calls[0].number === 1 && __tv.calls[1].id === 'org.tizen.tv-viewer'));
+    await current.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await current.waitForFunction(() => [...document.querySelectorAll('.section-inputs .setting-choice')].some(e => /HDMI 1.*Active/.test(e.textContent)));
+    check('Returning from viewer refreshes the Active port', await current.locator('[data-action="input.1"]').innerText().then(text => text.includes('Active')));
+    await current.evaluate(() => { __tv.currentInput = 3; Object.defineProperty(document, 'hidden', { configurable: true, value: false }); document.dispatchEvent(new Event('visibilitychange')); });
+    await current.waitForFunction(() => document.querySelector('[data-action="input.3"]').textContent.includes('Active'));
+    check('Visibility return refreshes an externally changed input', !(await current.locator('[data-action="input.1"]').innerText()).includes('Active'));
+    await current.evaluate(() => { __tv.sourceFailure = true; __tv.calls = []; });
+    await act('input.2'); await current.waitForFunction(() => ShoreQA.state().view === 'message');
+    check('Failed input selection displays an error and keeps viewer closed', (await current.locator('#stage').innerText()).includes('could not') && await current.evaluate(() => __tv.calls.length === 1));
+    await nav('back', 'back');
+    await current.evaluate(() => { __tv.holdInputs = true; });
+    await act('samsung.inputs'); await nav('back');
+    await current.evaluate(() => __tv.inputRequests.splice(0).forEach(f => f()));
+    check('Late discovery cannot reopen a closed chooser', (await state()).settingsGroup === 'samsung' && (await call('where')).focusCount === 1);
+    await closePage(); await page({ inputUnavailable: true }); await group('samsung'); await act('samsung.inputs');
+    check('Unavailable source API offers retry without invented ports', !(await current.locator('[data-action^="input."]').count()) && (await current.locator('#stage').innerText()).includes('Open CleanFrame on the TV'));
+    await nav('back'); check('Unavailable inputs remain escapable', (await state()).settingsGroup === 'samsung');
+    await closePage(); await page(); await current.evaluate(() => { __tv.videoSources = { connected: [], disconnected: [] }; });
+    await group('samsung'); await act('samsung.inputs');
+    await current.waitForSelector('[data-action="inputs.retry"]');
+    check('Empty inventory is truthful', (await current.locator('#stage').innerText()).includes('No HDMI inputs were reported'));
+  });
   await run('Real catalogue and native launch boundary', async () => {
     await page(); await library();
     const names = await current.locator('[data-action^="apps.open."] .label').allTextContents();
-    check('Consumer catalogue excludes services, self and duplicate YouTube', names.length === 12 && names.filter(n => n === 'YouTube').length === 1 && !names.includes('CleanFrame') && !names.includes('Background worker'), names);
+    check('Consumer catalogue excludes services, self and duplicate YouTube', names.length === 14 && names.filter(n => n === 'YouTube').length === 1 && !names.includes('CleanFrame') && !names.includes('Background worker'), names);
     check('Installed names stay text, including HTML punctuation', names.includes(UNSAFE_NAME) && !(await current.evaluate(() => window.__catalogXss)));
     check('Exploration fixtures do not appear', !names.includes('Plex') && !names.includes('Jellyfin'));
     await act('apps.open.' + SPOTIFY); await current.waitForFunction(() => __tv.calls.length > 0);
@@ -470,7 +559,7 @@ try {
     check('Catalogue failure leaves Home intact', same((await state()).dock, PRIMARY));
     await current.evaluate(() => { __tv.catalogFailure = false; }); await act('apps.retry');
     await current.waitForSelector('[data-action="apps.open.' + EXTRA + '"]');
-    check('Retry displays real installed names', (await current.locator('[data-action^="apps.open."]').count()) === 12);
+    check('Retry displays discovered apps and input shortcuts', (await current.locator('[data-action^="apps.open."]').count()) === 14);
   });
   await run('Native icon and failed-image fallback', async () => {
     await page({ catalog: CATALOG.map(a => a.id === EXTRA ? { ...a, iconPath: '/home/assets/icons/netflix.svg' } : a) });
