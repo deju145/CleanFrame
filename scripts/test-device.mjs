@@ -15,7 +15,11 @@ function harness(tvwindow) {
     launchAppControl: (control, id, ok, fail) => controls.push({ control, id, ok, fail })
   };
   const sourceRequests = [];
-  const window = { tizen: { application, tvwindow, systeminfo: {getPropertyValue: (name, ok, fail) => sourceRequests.push({name, ok, fail})}, ApplicationControl: function(operation) { this.operation = operation; } } };
+  const requestsHTTP = [];
+  function XHR() { requestsHTTP.push(this); }
+  XHR.prototype.open = function (method, url) { this.method = method; this.url = url; };
+  XHR.prototype.send = function (body) { this.body = body; };
+  const window = { XMLHttpRequest: XHR, tizen: { application, tvwindow, systeminfo: {getPropertyValue: (name, ok, fail) => sourceRequests.push({name, ok, fail})}, ApplicationControl: function(operation) { this.operation = operation; } } };
   vm.runInNewContext(source, {
     window, tizen: window.tizen,
     setTimeout: (callback, delay) => { const id = ++next; timers.set(id, { callback, at: now + delay }); return id; },
@@ -25,7 +29,7 @@ function harness(tvwindow) {
     now += ms;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   }
-  return { device: window.FrameDevice, requests, launches, controls, sourceRequests, advance };
+  return { device: window.FrameDevice, requests, launches, controls, sourceRequests, requestsHTTP, advance };
 }
 
 test('a 500-app catalogue can arrive after the old eight-second deadline', () => {
@@ -82,30 +86,34 @@ test('launch keeps its eight-second deadline independently of discovery', () => 
   assert.equal(results.length, 1);
 });
 
-test('BBC iPlayer uses a default app control with the exact native ID', () => {
+test('BBC requests the fixed loopback relay rather than the public app API', () => {
   const h = harness(), results = [];
   h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
-  assert.equal(h.launches.length, 0);
-  assert.equal(h.controls.length, 1);
-  assert.equal(h.controls[0].id, 'DqEoaplKlw.bbchybrid');
-  assert.equal(h.controls[0].control.operation, 'http://tizen.org/appcontrol/operation/default');
-  h.controls[0].ok();
-  assert.deepEqual(results, [null]);
+  assert.equal(h.launches.length,0); assert.equal(h.controls.length,0);
+  const xhr = h.requestsHTTP[0];
+  assert.equal(xhr.method,'POST'); assert.equal(xhr.url,'http://127.0.0.1:28199/launch/bbciplayer');
+  xhr.status=200; xhr.responseText=JSON.stringify({ok:true,appId:'DqEoaplKlw.bbchybrid'}); xhr.onload();
+  assert.deepEqual(results,[null]);
 });
-test('BBC app-control errors are reported and late success cannot hide a timeout', () => {
+test('BBC reports bridge failures and cannot accept late success after timeout', () => {
   const h = harness(), results = [];
   h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
-  h.advance(8000);
-  h.controls[0].ok();
-  assert.equal(results.length, 1);
-  assert.match(results[0].message, /did not respond/);
-  const failed = harness();
-  let error;
-  failed.device.launchApp('DqEoaplKlw.bbchybrid', value => { error = value; });
-  failed.controls[0].fail({message: 'Launch denied'});
-  assert.equal(error.detail, 'Launch denied');
+  h.requestsHTTP[0].onerror();
+  assert.match(results[0].message,/not reachable/);
+  const late=harness(), timeouts=[];
+  late.device.launchApp('DqEoaplKlw.bbchybrid', error => timeouts.push(error));
+  late.advance(20000);
+  late.requestsHTTP[0].status=200;
+  late.requestsHTTP[0].responseText=JSON.stringify({ok:true,appId:'DqEoaplKlw.bbchybrid'});
+  late.requestsHTTP[0].onload();
+  assert.equal(timeouts.length,1); assert.match(timeouts[0].message,/did not respond/);
 });
-
+test('BBC rejects an unverified relay response', () => {
+  const h=harness(); let error;
+  h.device.launchApp('DqEoaplKlw.bbchybrid', value => {error=value;});
+  h.requestsHTTP[0].status=200; h.requestsHTTP[0].responseText='{}'; h.requestsHTTP[0].onload();
+  assert.match(error.message,/did not confirm/);
+});
 test('HDMI 5 selects the reported port, shows fullscreen and returns on close', () => {
   const calls = [], source = { type: 'HDMI', number: 5 };
   const h = harness({

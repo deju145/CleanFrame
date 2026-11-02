@@ -48,14 +48,29 @@
   function launchApp(id, done) {
     if (id === 'cleanframe.hdmi4' || id === 'cleanframe.hdmi5') { input(Number(id.slice(-1)), done); return; }
     if (!api()) { unavailable(done); return; }
-    var finish = bounded(done);
-    try {
-      if (id === 'DqEoaplKlw.bbchybrid') {
-        var control = new tizen.ApplicationControl('http://tizen.org/appcontrol/operation/default', null, null, null);
-        api().launchAppControl(control, id, function () { finish(null); }, function (err) { finish(failure(err)); });
-      } else api().launch(id, function () { finish(null); }, function (err) { finish(failure(err)); });
-    }
+    var finish = bounded(done, id === 'DqEoaplKlw.bbchybrid' ? 20000 : 8000);
+    if (id === 'DqEoaplKlw.bbchybrid') { launchBBC(finish); return; }
+    try { api().launch(id, function () { finish(null); }, function (err) { finish(failure(err)); }); }
     catch (err) { finish(failure(err)); }
+  }
+  function launchBBC(done) {
+    if (!window.XMLHttpRequest) { done({message: 'BBC launch bridge is unavailable.'}); return; }
+    var xhr = new window.XMLHttpRequest(), finished = false;
+    function finish(error) { if (finished) return; finished = true; done(error); }
+    try {
+      xhr.open('POST', 'http://127.0.0.1:28199/launch/bbciplayer', true);
+      xhr.timeout = 18000;
+      xhr.onload = function () {
+        try {
+          var result = JSON.parse(xhr.responseText);
+          if (xhr.status === 200 && result.ok === true && result.appId === 'DqEoaplKlw.bbchybrid') finish(null);
+          else finish({message: result.error || 'Vetro did not confirm the BBC launch.'});
+        } catch (err) { finish({message: 'Invalid BBC bridge response.'}); }
+      };
+      xhr.onerror = function () { finish({message: 'BBC bridge is not reachable.', detail: 'Start the temporary bridge and check that Vetro has a connected root agent.'}); };
+      xhr.ontimeout = function () { finish({message: 'BBC launch timed out; check the TV before retrying.'}); };
+      xhr.send(null);
+    } catch (err) { finish(failure(err)); }
   }
   function launch(brand, done) {
     if (!IDS[brand]) { done({message: 'This app has no launch target.'}); return; }
