@@ -214,6 +214,21 @@ async function noLiveFilters() {
 
 try {
   preview = await openPreview();
+  await run('Utility focus clears the app highlight', async () => {
+    await page();
+    for (const layout of ['dock', 'list']) {
+      await look({layout}); await scene('home');
+      const remembered = (await state()).selected;
+      await nav(layout === 'dock' ? 'up' : 'right');
+      for (let i = 0; i < 4; i++) {
+        check('Only utility is highlighted in ' + layout,
+          await current.locator('.tile.is-focus, .tile.is-sel, .ph-row.is-focus, .ph-row.is-sel, #plate.on-sel, .ph-plate.is-current.on-sel').count() === 0);
+        if (i < 3) await nav(layout === 'dock' ? 'right' : 'down');
+      }
+      await nav(layout === 'dock' ? 'down' : 'left');
+      check('Returning restores remembered app in ' + layout, (await state()).selected === remembered);
+    }
+  });
   await run('Sources panel navigation', async () => {
     await page();
     for (const layout of ['dock', 'list']) {
