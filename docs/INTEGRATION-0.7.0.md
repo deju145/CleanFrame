@@ -1,6 +1,6 @@
 # CleanFrame v0.7.0 fork integration
 
-This branch combines upstream release `v0.7.0` (`845f332d083502fab39be49869052966103b564a`) with the fork's TV-only Vetro work (`40944d4ea49065b8b92b9b86374580f490c84367`). It has not been installed on the owner's TV.
+This branch combines upstream release `v0.7.0` (`845f332d083502fab39be49869052966103b564a`) with the fork's TV-only Vetro work (`40944d4ea49065b8b92b9b86374580f490c84367`). The original integration was installed on the owner’s TV; the direct Samsung API revision below still needs its own physical TV test.
 
 ## Reconciled behaviour
 
@@ -8,10 +8,11 @@ This branch combines upstream release `v0.7.0` (`845f332d083502fab39be4986905296
 - The picker and LIVE TV/PS5 dock shortcuts use upstream discovery, cancellation and viewer handoff. Disconnected ports are retained for sleeping devices. The older fullscreen overlay and remote-key interception are removed.
 - LIVE TV targets HDMI 4, PS5 HDMI 5. A missing port never selects another input. A matching saved five-app UK dock gets these shortcuts once; later user edits remain saved.
 - The streaming services and input shortcuts retain their bundled monochrome marks and provenance. The app loses its visible dock highlight when a utility has focus, while retaining its remembered position.
-- BBC iPlayer calls the fixed endpoint in the custom Vetro service. No standalone bridge or Mac startup command is used. The custom Vetro build and its connected root agent are required. The failed root-free manifest experiment on main is not carried into this branch.
+- BBC iPlayer now sends an empty POST directly to `http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid`. The manifest grants access only to that local origin plus the internet privilege. No Vetro request, root agent, relay, stored LAN address or Mac service is used. There is one launch attempt, no automatic fallback. HTTP success means submission was accepted, not proof of visible startup.
+- Owner evidence: the same endpoint at the TV’s LAN address opened iPlayer from Python on the Mac. Generic native Vetro launch returned to Samsung Home. Localhost access from the signed widget, its CORS behaviour and cold-start behaviour remain unverified.
 - Upstream packaging safeguards, Tizen 5.0 installation minimum, native-helper guards, source identity and local signing overlay are preserved. No certificate, app identity, Home/startup assignment or installed TV package has been changed by preparing this branch.
 
-## Validation
+## Previous integration validation
 
 Using Node 24 and system Chromium 154 with public fonts:
 
@@ -35,6 +36,12 @@ npm run check
 npm run dev:public
 ```
 
-Preview uses public fonts; it cannot launch TV apps. Packaging and device installation are separate next steps. Keep the original author certificate for each installed app. The custom Vetro update must use the Apps2Samsung signing identity already associated with Vetro. Do not uninstall the working Vetro installation merely to bypass a signing mismatch.
+Preview uses public fonts; it cannot launch TV apps. Packaging and device installation are separate next steps. Keep the original author certificate for each installed app. Vetro does not need updating for this test. Leave its installation and signing identity unchanged.
 
-After installation, check source selection, picture/sound, remote response, iPlayer's visible launch and startup after a full power cycle with the Mac off. Vetro may need to be opened manually and allowed time to reconnect its root agent. None of those physical outcomes are established by these browser tests. Native Home/startup reassignment remains outside this integration.
+After installation, check source selection, picture/sound, remote response, iPlayer's visible launch and startup after a full power cycle with the Mac off. Test BBC with Vetro closed; if it works, repeat after a cold start without opening Vetro. None of those physical outcomes are established by these browser tests. Native Home/startup reassignment remains outside this integration.
+
+## Direct Samsung API revision
+
+Offline checks cover the fixed empty POST, empty 2xx acknowledgements, HTTP rejection, network and policy errors, timeouts, callback completion and no relay/native fallback. Browser tests mock Samsung HTTP responses; they do not establish packaged TV access. The legacy Vetro preparation files remain historical tooling only and are not bundled in the widget. Local signing configuration and SDK identities are unchanged.
+
+Revision validation: lint and widget/resource validation passed; 18 adapter checks and the three historical Vetro endpoint checks passed. Full browser run: 451 passing checks, one hidden-wallpaper retry timeout; that section passed alone on rerun (three checks including run integrity). Public-source audit and unsigned public-font widget export passed. The exported manifest and device adapter contain port 8001 and no port 8099; Vetro tooling is not bundled. No physical TV, signing certificate or local identity was accessed by these checks.

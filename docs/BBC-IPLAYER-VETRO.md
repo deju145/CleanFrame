@@ -1,6 +1,8 @@
 # BBC iPlayer through Vetro: TV-only integration
 
-The owner confirmed BBC iPlayer opens from Vetro but returns to Samsung Home when launched through either public web launch API on their LS03F.
+**Historical experiment, superseded by the direct Samsung API test in [INTEGRATION-0.7.0.md](INTEGRATION-0.7.0.md). Current CleanFrame does not call this Vetro integration. Do not install a custom Vetro build for the direct API test.**
+
+Later owner tests showed Vetro’s generic native launch returned to Samsung Home too. The earlier assumption that this route successfully opened iPlayer was not sustained.
 
 This version adds a single-purpose endpoint to Vetro's existing service: `POST /cleanframe/bbciplayer`. It accepts only TV-loopback callers with an absent or packaged-widget (`null`) origin, verifies iPlayer is installed, and uses Vetro's existing native launch action. It is not an arbitrary command API. CleanFrame calls that endpoint and waits for an acknowledgement.
 

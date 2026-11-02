@@ -168,53 +168,43 @@ test('unknown and invalid ports cannot be substituted and a newer request cancel
   h.sourceRequests[1].ok(video); assert.equal(h.changes[0].source.number, 2);
 });
 
-test('BBC requests the fixed loopback relay rather than the public app API', () => {
-  const h = harness(), results = [];
-  h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
-  assert.equal(h.launches.length,0);
-  const xhr = h.requestsHTTP[0];
-  assert.equal(xhr.method,'POST'); assert.equal(xhr.url,'http://127.0.0.1:8099/cleanframe/bbciplayer');
-  xhr.status=200; xhr.responseText=JSON.stringify({ok:true,appId:'DqEoaplKlw.bbchybrid'}); xhr.onload();
-  assert.deepEqual(results,[null]);
+test('BBC sends one empty POST directly to the TV Samsung API without Vetro or native launch', () => {
+  const h=harness(), results=[];
+  h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));
+  const xhr=h.requestsHTTP[0];
+  assert.equal(xhr.method,'POST');assert.equal(xhr.url,'http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid');
+  assert.equal(xhr.body,null);assert.equal(h.requestsHTTP.length,1);assert.equal(h.launches.length,0);
+  xhr.status=200;xhr.responseText='';xhr.onload();assert.deepEqual(results,[null]);
 });
-test('BBC reports bridge failures and cannot accept late success after timeout', () => {
-  const h = harness(), results = [];
-  h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
-  h.requestsHTTP[0].onerror();
-  assert.equal(h.requestsHTTP[1].method,'GET');
-  assert.equal(h.requestsHTTP[1].url,'http://127.0.0.1:8099/status');
-  h.requestsHTTP[1].onerror();
-  assert.match(results[0].detail,/Status GET also failed/);
-  const late=harness(), timeouts=[];
-  late.device.launchApp('DqEoaplKlw.bbchybrid', error => timeouts.push(error));
-  late.advance(20000);
-  late.requestsHTTP[0].status=200;
-  late.requestsHTTP[0].responseText=JSON.stringify({ok:true,appId:'DqEoaplKlw.bbchybrid'});
-  late.requestsHTTP[0].onload();
-  assert.equal(timeouts.length,1); assert.match(timeouts[0].message,/did not respond/);
+test('BBC accepts empty successful HTTP responses and reports API rejection statuses', () => {
+  for(const status of [200,201,204,400,401,403,404,500]) {
+    const h=harness();let result;
+    h.device.launchApp('DqEoaplKlw.bbchybrid',error=>{result=error;});
+    const xhr=h.requestsHTTP[0];xhr.status=status;xhr.responseText='';xhr.onload();
+    if(status<300)assert.equal(result,null);else assert.match(result.detail,new RegExp('HTTP '+status));
+  }
 });
-test('BBC rejects an unverified relay response', () => {
-  const h=harness(); let error;
-  h.device.launchApp('DqEoaplKlw.bbchybrid', value => {error=value;});
-  h.requestsHTTP[0].status=200; h.requestsHTTP[0].responseText='{}'; h.requestsHTTP[0].onload();
-  assert.match(error.message,/did not confirm/);
+test('BBC network failure reports widget context and never retries or calls Vetro', () => {
+  const h=harness(), results=[];
+  h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));
+  h.requestsHTTP[0].onerror();h.requestsHTTP[0].status=200;h.requestsHTTP[0].onload();
+  assert.equal(results.length,1);assert.match(results[0].detail,/Origin: null/);assert.match(results[0].detail,/HTTP 0/);
+  assert.equal(h.requestsHTTP.length,1);assert.equal(h.launches.length,0);
 });
-
-test('BBC network diagnosis reports a reachable root service without retrying launch', () => {
-  const h=harness();let error;
-  h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});
-  h.requestsHTTP[0].onerror();
-  const probe=h.requestsHTTP[1];probe.status=200;probe.responseText=JSON.stringify({agent:{connected:true}});probe.onload();
-  assert.match(error.detail,/Origin: null/);assert.match(error.detail,/HTTP 200; root connected/);
-  assert.equal(h.requestsHTTP.length,2);assert.equal(h.launches.length,0);
+test('BBC timeout completes once and ignores late HTTP success', () => {
+  const h=harness(), results=[];
+  h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));
+  h.requestsHTTP[0].ontimeout();h.requestsHTTP[0].status=200;h.requestsHTTP[0].onload();h.advance(20000);
+  assert.equal(results.length,1);assert.match(results[0].message,/timed out/);
+  const late=harness(), bounded=[];
+  late.device.launchApp('DqEoaplKlw.bbchybrid',error=>bounded.push(error));late.advance(20000);
+  late.requestsHTTP[0].status=200;late.requestsHTTP[0].onload();assert.equal(bounded.length,1);
 });
-
 test('BBC network diagnosis includes a reported browser policy violation', () => {
   const h=harness();let error;
   h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});
-  h.events.securitypolicyviolation({blockedURI:'http://127.0.0.1:8099/cleanframe/bbciplayer',effectiveDirective:'connect-src'});
-  h.requestsHTTP[0].onerror();h.requestsHTTP[1].ontimeout();
-  assert.match(error.detail,/Browser blocked: connect-src/);
+  h.events.securitypolicyviolation({blockedURI:'http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid',effectiveDirective:'connect-src'});
+  h.requestsHTTP[0].onerror();assert.match(error.detail,/Browser blocked: connect-src/);
 });
 
 test('UK package variants resolve to monochrome marks without discovery', () => {

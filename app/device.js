@@ -1,4 +1,4 @@
-/* Public Tizen application APIs. No Mac server, network address or credentials. */
+/* Tizen APIs and the TV-local Samsung app endpoint. No external server or credentials. */
 (function () {
   'use strict';
   var IDS = {
@@ -112,55 +112,43 @@
     try { api().launch(id, function () { finish(null); }, function (err) { finish(failure(err)); }); }
     catch (err) { finish(failure(err)); }
   }
+  var BBC_URL = 'http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid';
   var lastBBCPolicy = '';
   if (typeof window.addEventListener === 'function') window.addEventListener('securitypolicyviolation', function (event) {
-    if (typeof event.blockedURI === 'string' && event.blockedURI.indexOf('http://127.0.0.1:8099') === 0) {
+    if (typeof event.blockedURI === 'string' && event.blockedURI.indexOf('http://127.0.0.1:8001') === 0) {
       lastBBCPolicy = event.effectiveDirective || event.violatedDirective || 'network policy';
     }
   });
   function launchBBC(done) {
-    if (!window.XMLHttpRequest) { done({message: 'BBC launch bridge is unavailable.'}); return; }
-    var xhr = new window.XMLHttpRequest(), finished = false, probing = false;
+    if (!window.XMLHttpRequest) { done({message: 'Samsung TV launch API is unavailable.'}); return; }
+    var xhr = new window.XMLHttpRequest(), finished = false;
     lastBBCPolicy = '';
-    function context(note) {
+    function detail(note) {
       var location = window.location || {};
-      return 'Origin: ' + (location.origin || 'unknown') + '; protocol: ' + (location.protocol || 'unknown')
-        + '. ' + note + (lastBBCPolicy ? ' Browser blocked: ' + lastBBCPolicy + '.' : '');
+      return 'Samsung API: 127.0.0.1:8001. Origin: ' + (location.origin || 'unknown')
+        + '; protocol: ' + (location.protocol || 'unknown') + '. ' + note
+        + (lastBBCPolicy ? ' Browser blocked: ' + lastBBCPolicy + '.' : '');
     }
     function finish(error) { if (finished) return; finished = true; done(error); }
-    function diagnoseNetwork() {
-      if (finished || probing) return;
-      probing = true;
-      // Read-only probe; never retry the launch or run a native command here.
-      var probe = new window.XMLHttpRequest();
-      function report(note) { finish({message: 'BBC launch request failed.', detail: context(note)}); }
-      try {
-        probe.open('GET', 'http://127.0.0.1:8099/status', true);
-        probe.timeout = 1000;
-        probe.onload = function () {
-          var root = 'unknown';
-          try { root = JSON.parse(probe.responseText).agent.connected ? 'connected' : 'disconnected'; } catch (err) { /* Preserve HTTP evidence even without valid status JSON. */ }
-          report('Status GET: HTTP ' + probe.status + '; root ' + root + '. BBC POST failed.');
-        };
-        probe.onerror = function () { report('Status GET also failed (HTTP ' + (probe.status || 0) + ').'); };
-        probe.ontimeout = function () { report('Status GET timed out.'); };
-        probe.send(null);
-      } catch (err) { report('Status probe exception: ' + (err.name || 'unknown') + '.'); }
-    }
     try {
-      xhr.open('POST', 'http://127.0.0.1:8099/cleanframe/bbciplayer', true);
+      xhr.open('POST', BBC_URL, true);
       xhr.timeout = 18000;
       xhr.onload = function () {
-        try {
-          var result = JSON.parse(xhr.responseText);
-          if (xhr.status === 200 && result.ok === true && result.appId === 'DqEoaplKlw.bbchybrid') finish(null);
-          else finish({message: result.error || 'Vetro did not confirm the BBC launch.', detail: context('BBC POST: HTTP ' + xhr.status + '.')});
-        } catch (err) { finish({message: 'Invalid BBC bridge response.', detail: context('BBC POST: HTTP ' + xhr.status + '.')}); }
+        // A 2xx response acknowledges submission, not visible app startup.
+        if (xhr.status >= 200 && xhr.status < 300) { finish(null); return; }
+        finish({message: 'Samsung TV API rejected the BBC launch.', detail: detail('HTTP ' + xhr.status + '.')});
       };
-      xhr.onerror = diagnoseNetwork;
-      xhr.ontimeout = function () { finish({message: 'BBC launch timed out; check the TV before retrying.'}); };
+      xhr.onerror = function () {
+        finish({message: 'BBC launch request failed.', detail: detail('No readable HTTP response (HTTP 0).')});
+      };
+      xhr.ontimeout = function () {
+        finish({message: 'Samsung TV API launch timed out.', detail: detail('Check the TV before retrying.')});
+      };
+      // Empty POST, no custom headers, credentials, relay or automatic retry.
       xhr.send(null);
-    } catch (err) { finish(failure(err)); }
+    } catch (err) {
+      finish({message: 'Samsung TV launch request could not start.', detail: detail(err.name || 'Request exception.')});
+    }
   }
   function launch(brand, done) {
     if (!IDS[brand]) { done({message: 'This app has no launch target.'}); return; }

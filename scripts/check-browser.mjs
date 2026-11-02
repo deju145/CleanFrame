@@ -244,7 +244,7 @@ try {
     await act('input.5'); await current.waitForFunction(()=>__tv.calls.some(c=>c.id==='org.tizen.tv-viewer'));
     check('Sources selects sleeping HDMI 5 through native viewer',await current.evaluate(()=>__tv.calls[0].method==='setSource' && __tv.calls[0].number===5 && __tv.calls[1].id==='org.tizen.tv-viewer'));
   });
-  await run('Fork saved UK dock and Vetro launch integration', async () => {
+  await run('Fork saved UK dock and direct Samsung launch integration', async () => {
     const pins=[{id:'stremio',appId:'IkWsFHtOY9.Stremio',name:'Stremio'},
       {id:'DqEoaplKlw.bbchybrid',appId:'DqEoaplKlw.bbchybrid',name:'BBC iPlayer'},
       {id:'OCaxbgg9v6.chfourctv',appId:'OCaxbgg9v6.chfourctv',name:'Channel 4'},
@@ -252,7 +252,7 @@ try {
       {id:'OfLpiC2MZQ.Player',appId:'OfLpiC2MZQ.Player',name:'STV Player'}];
     let response={ok:true,appId:'DqEoaplKlw.bbchybrid'},status=200,requests=0;
     await page({seed:baseline({dock:pins.map(a=>a.id),appRecords:pins,lastApp:'stremio'}),catalogFailure:true},async page=>{
-      await page.route('http://127.0.0.1:8099/cleanframe/bbciplayer',route=>{
+      await page.route('http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid',route=>{
         requests++;return route.fulfill({status,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(response)});
       });
     });
@@ -262,15 +262,15 @@ try {
     check('Saved UK and input pins all use bundled monochrome marks',same(marks,['stremio','bbciplayer','channel4','itvx','stv','livetv','ps5']),marks);
     check('Saved UK dock has no coloured native artwork',await current.locator('#dock [data-native-icon]').count()===0);
     await current.screenshot({path:out+'uk-monochrome-dock.png'});
-    const acknowledged=current.waitForResponse(r=>r.url()==='http://127.0.0.1:8099/cleanframe/bbciplayer' && r.status()===200);
+    const acknowledged=current.waitForResponse(r=>r.url()==='http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid' && r.status()===200);
     await act('home.app.DqEoaplKlw.bbchybrid'); await acknowledged; await current.waitForLoadState('networkidle');
     check('BBC sends the fixed TV-local request',requests===1 && await current.evaluate(()=>__tv.calls.length===0));
-    current.__expectedFailures.push('/cleanframe/bbciplayer');
-    status=503;response={error:'no root agent connected'};
+    current.__expectedFailures.push('/api/v2/applications/');
+    status=403;response={error:'denied'};
     await current.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await scene('home'); await act('home.app.DqEoaplKlw.bbchybrid');
     await current.waitForFunction(()=>ShoreQA.state().view==='message');
-    check('Disconnected Vetro gives a visible error',(await current.locator('#stage').innerText()).includes('no root agent connected'));
+    check('Samsung API denial gives a visible HTTP error',(await current.locator('#stage').innerText()).includes('HTTP 403'));
     await nav('back');await editor();await remove('cleanframe.hdmi5');
     await current.reload();await ready();
     check('Removed input stays removed after restart',!(await state()).dock.includes('cleanframe.hdmi5'));
@@ -278,14 +278,13 @@ try {
   await run('Fork BBC network diagnostics', async () => {
     const id='DqEoaplKlw.bbchybrid';
     await page({seed:baseline({dock:[id],appRecords:[{id,appId:id,name:'BBC iPlayer'}],lastApp:id})},async page=>{
-      await page.route('http://127.0.0.1:8099/cleanframe/bbciplayer',route=>route.abort('connectionrefused'));
-      await page.route('http://127.0.0.1:8099/status',route=>route.fulfill({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify({agent:{connected:true}})}));
+      await page.route('http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid',route=>route.abort('connectionrefused'));
     });
-    current.__expectedFailures.push('/cleanframe/bbciplayer');
+    current.__expectedFailures.push('/api/v2/applications/');
     await act('home.app.'+id);
     await current.waitForFunction(()=>ShoreQA.state().view==='message');
     const text=await current.locator('#stage').innerText();
-    check('Failed BBC POST shows widget origin and reachable root evidence',text.includes('Origin:') && text.includes('HTTP 200; root connected'));
+    check('Failed Samsung POST shows widget origin and HTTP evidence',text.includes('Origin:') && text.includes('HTTP 0'));
     check('Network diagnosis does not use public native launch',await current.evaluate(()=>__tv.calls.length===0));
     await current.screenshot({path:out+'bbc-network-diagnostic.png'});
   });
