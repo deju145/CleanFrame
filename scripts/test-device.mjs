@@ -86,34 +86,29 @@ test('launch keeps its eight-second deadline independently of discovery', () => 
   assert.equal(results.length, 1);
 });
 
-test('BBC requests the fixed loopback relay rather than the public app API', () => {
+test('BBC uses its registered eden_resume operation with no Vetro request', () => {
   const h = harness(), results = [];
   h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
-  assert.equal(h.launches.length,0); assert.equal(h.controls.length,0);
-  const xhr = h.requestsHTTP[0];
-  assert.equal(xhr.method,'POST'); assert.equal(xhr.url,'http://127.0.0.1:28199/launch/bbciplayer');
-  xhr.status=200; xhr.responseText=JSON.stringify({ok:true,appId:'DqEoaplKlw.bbchybrid'}); xhr.onload();
-  assert.deepEqual(results,[null]);
+  assert.equal(h.launches.length,0); assert.equal(h.requestsHTTP.length,0);
+  assert.equal(h.controls.length,1);
+  assert.equal(h.controls[0].id,'DqEoaplKlw.bbchybrid');
+  assert.equal(h.controls[0].control.operation,'http://samsung.com/appcontrol/operation/eden_resume');
+  h.controls[0].ok(); assert.deepEqual(results,[null]);
 });
-test('BBC reports bridge failures and cannot accept late success after timeout', () => {
-  const h = harness(), results = [];
-  h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
-  h.requestsHTTP[0].onerror();
-  assert.match(results[0].message,/not reachable/);
-  const late=harness(), timeouts=[];
-  late.device.launchApp('DqEoaplKlw.bbchybrid', error => timeouts.push(error));
-  late.advance(20000);
-  late.requestsHTTP[0].status=200;
-  late.requestsHTTP[0].responseText=JSON.stringify({ok:true,appId:'DqEoaplKlw.bbchybrid'});
-  late.requestsHTTP[0].onload();
-  assert.equal(timeouts.length,1); assert.match(timeouts[0].message,/did not respond/);
+test('BBC app-control error is reported without falling back to Vetro', () => {
+  const h=harness();let error;
+  h.device.launchApp('DqEoaplKlw.bbchybrid', value=>{error=value;});
+  h.controls[0].fail({name:'SecurityError',message:'Launch denied'});
+  assert.equal(error.detail,'Launch denied');
+  assert.equal(h.requestsHTTP.length,0);assert.equal(h.launches.length,0);
 });
-test('BBC rejects an unverified relay response', () => {
-  const h=harness(); let error;
-  h.device.launchApp('DqEoaplKlw.bbchybrid', value => {error=value;});
-  h.requestsHTTP[0].status=200; h.requestsHTTP[0].responseText='{}'; h.requestsHTTP[0].onload();
-  assert.match(error.message,/did not confirm/);
+test('BBC late callback cannot override the timeout', () => {
+  const h=harness(),results=[];
+  h.device.launchApp('DqEoaplKlw.bbchybrid', value=>results.push(value));
+  h.advance(20000);h.controls[0].ok();
+  assert.equal(results.length,1);assert.match(results[0].message,/did not respond/);
 });
+
 test('HDMI 5 selects the reported port, shows fullscreen and returns on close', () => {
   const calls = [], source = { type: 'HDMI', number: 5 };
   const h = harness({
