@@ -18,7 +18,9 @@ function harness({ supported = true, throwSource = false } = {}) {
   function XHR() { requestsHTTP.push(this); }
   XHR.prototype.open = function (method, url) { this.method = method; this.url = url; };
   XHR.prototype.send = function (body) { this.body = body; };
-  const window = { XMLHttpRequest: XHR, tizen: { application } };
+  const events = {};
+  const window = { XMLHttpRequest: XHR, tizen: { application }, location: {origin:'null',protocol:'file:'},
+    addEventListener: (name,handler) => {events[name]=handler;} };
   if (supported) {
     window.tizen.systeminfo = { getPropertyValue: (name, ok, fail) => { assert.equal(name, 'VIDEOSOURCE'); sourceRequests.push({ ok, fail }); } };
     window.tizen.tvwindow = { getSource: (...args) => { assert.equal(args.length, 0); return current; },
@@ -33,7 +35,7 @@ function harness({ supported = true, throwSource = false } = {}) {
     now += ms;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   }
-  return { device: window.FrameDevice, requests, launches, sourceRequests, changes, requestsHTTP, advance, setCurrent: value => { current = value; } };
+  return { device: window.FrameDevice, requests, launches, sourceRequests, changes, requestsHTTP, events, advance, setCurrent: value => { current = value; } };
 }
 
 test('a 500-app catalogue can arrive after the old eight-second deadline', () => {
@@ -179,7 +181,10 @@ test('BBC reports bridge failures and cannot accept late success after timeout',
   const h = harness(), results = [];
   h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
   h.requestsHTTP[0].onerror();
-  assert.match(results[0].message,/not reachable/);
+  assert.equal(h.requestsHTTP[1].method,'GET');
+  assert.equal(h.requestsHTTP[1].url,'http://127.0.0.1:8099/status');
+  h.requestsHTTP[1].onerror();
+  assert.match(results[0].detail,/Status GET also failed/);
   const late=harness(), timeouts=[];
   late.device.launchApp('DqEoaplKlw.bbchybrid', error => timeouts.push(error));
   late.advance(20000);
@@ -193,6 +198,23 @@ test('BBC rejects an unverified relay response', () => {
   h.device.launchApp('DqEoaplKlw.bbchybrid', value => {error=value;});
   h.requestsHTTP[0].status=200; h.requestsHTTP[0].responseText='{}'; h.requestsHTTP[0].onload();
   assert.match(error.message,/did not confirm/);
+});
+
+test('BBC network diagnosis reports a reachable root service without retrying launch', () => {
+  const h=harness();let error;
+  h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});
+  h.requestsHTTP[0].onerror();
+  const probe=h.requestsHTTP[1];probe.status=200;probe.responseText=JSON.stringify({agent:{connected:true}});probe.onload();
+  assert.match(error.detail,/Origin: null/);assert.match(error.detail,/HTTP 200; root connected/);
+  assert.equal(h.requestsHTTP.length,2);assert.equal(h.launches.length,0);
+});
+
+test('BBC network diagnosis includes a reported browser policy violation', () => {
+  const h=harness();let error;
+  h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});
+  h.events.securitypolicyviolation({blockedURI:'http://127.0.0.1:8099/cleanframe/bbciplayer',effectiveDirective:'connect-src'});
+  h.requestsHTTP[0].onerror();h.requestsHTTP[1].ontimeout();
+  assert.match(error.detail,/Browser blocked: connect-src/);
 });
 
 test('UK package variants resolve to monochrome marks without discovery', () => {

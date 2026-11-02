@@ -112,10 +112,41 @@
     try { api().launch(id, function () { finish(null); }, function (err) { finish(failure(err)); }); }
     catch (err) { finish(failure(err)); }
   }
+  var lastBBCPolicy = '';
+  if (typeof window.addEventListener === 'function') window.addEventListener('securitypolicyviolation', function (event) {
+    if (typeof event.blockedURI === 'string' && event.blockedURI.indexOf('http://127.0.0.1:8099') === 0) {
+      lastBBCPolicy = event.effectiveDirective || event.violatedDirective || 'network policy';
+    }
+  });
   function launchBBC(done) {
     if (!window.XMLHttpRequest) { done({message: 'BBC launch bridge is unavailable.'}); return; }
-    var xhr = new window.XMLHttpRequest(), finished = false;
+    var xhr = new window.XMLHttpRequest(), finished = false, probing = false;
+    lastBBCPolicy = '';
+    function context(note) {
+      var location = window.location || {};
+      return 'Origin: ' + (location.origin || 'unknown') + '; protocol: ' + (location.protocol || 'unknown')
+        + '. ' + note + (lastBBCPolicy ? ' Browser blocked: ' + lastBBCPolicy + '.' : '');
+    }
     function finish(error) { if (finished) return; finished = true; done(error); }
+    function diagnoseNetwork() {
+      if (finished || probing) return;
+      probing = true;
+      // Read-only probe; never retry the launch or run a native command here.
+      var probe = new window.XMLHttpRequest();
+      function report(note) { finish({message: 'BBC launch request failed.', detail: context(note)}); }
+      try {
+        probe.open('GET', 'http://127.0.0.1:8099/status', true);
+        probe.timeout = 1000;
+        probe.onload = function () {
+          var root = 'unknown';
+          try { root = JSON.parse(probe.responseText).agent.connected ? 'connected' : 'disconnected'; } catch (err) { /* Preserve HTTP evidence even without valid status JSON. */ }
+          report('Status GET: HTTP ' + probe.status + '; root ' + root + '. BBC POST failed.');
+        };
+        probe.onerror = function () { report('Status GET also failed (HTTP ' + (probe.status || 0) + ').'); };
+        probe.ontimeout = function () { report('Status GET timed out.'); };
+        probe.send(null);
+      } catch (err) { report('Status probe exception: ' + (err.name || 'unknown') + '.'); }
+    }
     try {
       xhr.open('POST', 'http://127.0.0.1:8099/cleanframe/bbciplayer', true);
       xhr.timeout = 18000;
@@ -123,10 +154,10 @@
         try {
           var result = JSON.parse(xhr.responseText);
           if (xhr.status === 200 && result.ok === true && result.appId === 'DqEoaplKlw.bbchybrid') finish(null);
-          else finish({message: result.error || 'Vetro did not confirm the BBC launch.'});
-        } catch (err) { finish({message: 'Invalid BBC bridge response.'}); }
+          else finish({message: result.error || 'Vetro did not confirm the BBC launch.', detail: context('BBC POST: HTTP ' + xhr.status + '.')});
+        } catch (err) { finish({message: 'Invalid BBC bridge response.', detail: context('BBC POST: HTTP ' + xhr.status + '.')}); }
       };
-      xhr.onerror = function () { finish({message: 'Vetro BBC integration is not reachable.', detail: 'Open the custom Vetro build and wait for its root agent to connect.'}); };
+      xhr.onerror = diagnoseNetwork;
       xhr.ontimeout = function () { finish({message: 'BBC launch timed out; check the TV before retrying.'}); };
       xhr.send(null);
     } catch (err) { finish(failure(err)); }

@@ -275,6 +275,20 @@ try {
     await current.reload();await ready();
     check('Removed input stays removed after restart',!(await state()).dock.includes('cleanframe.hdmi5'));
   });
+  await run('Fork BBC network diagnostics', async () => {
+    const id='DqEoaplKlw.bbchybrid';
+    await page({seed:baseline({dock:[id],appRecords:[{id,appId:id,name:'BBC iPlayer'}],lastApp:id})},async page=>{
+      await page.route('http://127.0.0.1:8099/cleanframe/bbciplayer',route=>route.abort('connectionrefused'));
+      await page.route('http://127.0.0.1:8099/status',route=>route.fulfill({status:200,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify({agent:{connected:true}})}));
+    });
+    current.__expectedFailures.push('/cleanframe/bbciplayer');
+    await act('home.app.'+id);
+    await current.waitForFunction(()=>ShoreQA.state().view==='message');
+    const text=await current.locator('#stage').innerText();
+    check('Failed BBC POST shows widget origin and reachable root evidence',text.includes('Origin:') && text.includes('HTTP 200; root connected'));
+    check('Network diagnosis does not use public native launch',await current.evaluate(()=>__tv.calls.length===0));
+    await current.screenshot({path:out+'bbc-network-diagnostic.png'});
+  });
   await run('Utility focus clears the app highlight', async () => {
     await page();
     for (const layout of ['dock', 'list']) {
