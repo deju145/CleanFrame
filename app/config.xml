@@ -2,7 +2,7 @@
 <widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="https://local.frame-home/app" version="0.6.1" viewmodes="maximized">
   <tizen:application id="nClrkHome1.FrameHome" package="nClrkHome1" required_version="6.5"/>
   <content src="index.html"/>
-  <access origin="http://127.0.0.1:28199" subdomains="false"/>
+  <access origin="http://127.0.0.1:8099" subdomains="false"/>
   <name>CleanFrame</name>
   <icon src="icon.png"/>
   <feature name="http://tizen.org/feature/screen.size.normal.1080.1920"/>

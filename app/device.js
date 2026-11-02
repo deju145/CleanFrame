@@ -58,7 +58,7 @@
     var xhr = new window.XMLHttpRequest(), finished = false;
     function finish(error) { if (finished) return; finished = true; done(error); }
     try {
-      xhr.open('POST', 'http://127.0.0.1:28199/launch/bbciplayer', true);
+      xhr.open('POST', 'http://127.0.0.1:8099/cleanframe/bbciplayer', true);
       xhr.timeout = 18000;
       xhr.onload = function () {
         try {
@@ -67,7 +67,7 @@
           else finish({message: result.error || 'Vetro did not confirm the BBC launch.'});
         } catch (err) { finish({message: 'Invalid BBC bridge response.'}); }
       };
-      xhr.onerror = function () { finish({message: 'BBC bridge is not reachable.', detail: 'Start the temporary bridge and check that Vetro has a connected root agent.'}); };
+      xhr.onerror = function () { finish({message: 'Vetro BBC integration is not reachable.', detail: 'Open the custom Vetro build and wait for its root agent to connect.'}); };
       xhr.ontimeout = function () { finish({message: 'BBC launch timed out; check the TV before retrying.'}); };
       xhr.send(null);
     } catch (err) { finish(failure(err)); }

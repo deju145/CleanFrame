@@ -1,27 +1,36 @@
-# BBC iPlayer through Vetro (test integration)
+# BBC iPlayer through Vetro: TV-only integration
 
-BBC iPlayer returned to Samsung Home on this LS03F when started using either public web-app launch API. The owner confirmed that Vetro launches the same installed app successfully. This integration forwards only `DqEoaplKlw.bbchybrid` to Vetro's `POST /apps/launch`, which uses its connected root agent and native app launcher.
+The owner confirmed BBC iPlayer opens from Vetro but returns to Samsung Home when launched through either public web launch API on their LS03F.
 
-CleanFrame connects to a small relay bound to `127.0.0.1:28199` on the TV. The relay supplies packaged-widget CORS responses and waits for Vetro's launch acknowledgement. No native shell command or arbitrary application ID can be supplied through the relay. No Mac needs to remain running after setup.
+This version adds a single-purpose endpoint to Vetro's existing service: `POST /cleanframe/bbciplayer`. It accepts only TV-loopback callers with an absent or packaged-widget (`null`) origin, verifies iPlayer is installed, and uses Vetro's existing native launch action. It is not an arbitrary command API. CleanFrame calls that endpoint and waits for an acknowledgement.
 
-## Installation and testing
+There is no separate relay process, no Mac startup command, and no new boot service. After a reboot, the integration is available once Vetro's service is running and its root agent is connected. Startup may be slow and may require opening Vetro manually on this TV. A Mac is needed only for building, signing and initial installation.
 
-Build, sign and install CleanFrame as usual while Developer Mode Host PC IP points to the installation Mac. Preserve the existing certificate and application identity.
+## Prepare the custom Vetro package
 
-Then set the TV's Developer Mode Host PC IP back to `127.0.0.1`, restart, open Vetro if necessary, and wait for its root agent to connect. From the repository on the Mac, run:
+The patch is pinned to the installed Vetro 0.3.5 source revision reported by this TV: `fb1cadc66ff52cd86358b751e17c1cfb225e0733`. It refuses a different revision or unrelated changes in Vetro's HTTP service source.
+
+From the CleanFrame checkout:
 
 ```sh
-python3 scripts/start-bbc-bridge.py --host YOUR_TV_IP
+mkdir -p .local
+git clone https://github.com/andrearicci93/vetro.git .local/vetro-source
+git -C .local/vetro-source checkout --detach fb1cadc66ff52cd86358b751e17c1cfb225e0733
+node integrations/vetro/prepare.cjs .local/vetro-source .local/vetro-bbc-unsigned.wgt
 ```
 
-The script checks Vetro's status, discovers its actual Node executable through its current process, and stages a relay under `/run/cleanframe-bbc-bridge`. It starts that runtime with the relay, then verifies the relay's health from the TV. It does not alter Vetro's installed files, Home routing, security policy, or boot configuration.
+The preparation script modifies only that local Vetro source checkout, keeps its original HTTP service source under its ignored .local directory, and collects the complete root-integrated Vetro package using its own builder. It does not contact the TV or use certificates. The output is unsigned and cannot yet be installed.
 
-Open CleanFrame manually on the TV and choose BBC iPlayer. A launch acknowledgement is command evidence; confirm the visible iPlayer screen yourself.
+## Signing and installation constraint
 
-If Vetro uses a different port, add `--vetro-port PORT`. The CleanFrame-to-relay port remains 28199. If that port belongs to another service, do not kill it; report the startup error.
+The existing Vetro installation came from Apps2Samsung. An in-place update must use the same author certificate. Do not assume the separately created CleanFrame certificate matches it. Obtain the existing Apps2Samsung signing profile or use a supported installer flow that signs with its original author key. Preserve Vetro's configuration and a recovery copy of its working package before installation.
 
-## Reboots and removal
+Do not uninstall Vetro merely to bypass an author-signature mismatch. A separate app identity would also need review of service IDs, self-protection logic, ports and competing root agents.
 
-This relay is temporary and does not install an autostart service. After a full TV reboot, wait for Vetro to reconnect its root agent, then rerun the setup command. Otherwise CleanFrame reports that the BBC bridge is unreachable. A TV reboot stops the relay and clears its files under /run.
+Once the custom Vetro package can be signed and installed in place, rebuild/install CleanFrame as usual. Keep Developer Mode Host PC IP at 127.0.0.1 for Vetro's TV-local root acquisition. Test the native iPlayer launch, then repeat after a full power cycle with the Mac off.
 
-Other app launch paths and root-free HDMI shortcuts are unchanged. BBC launch compatibility without Vetro/root is not established.
+## Validation
+
+The endpoint's fixed launch, acknowledgement, CORS handling, rejection of network callers, methods and disconnected-root response have focused tests. Physical TV launch and power-cycle behaviour still require confirmation.
+
+The previous temporary standalone relay and Mac startup script have been removed. Do not use instructions from that earlier implementation.

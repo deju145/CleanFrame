@@ -91,7 +91,7 @@ test('BBC requests the fixed loopback relay rather than the public app API', () 
   h.device.launchApp('DqEoaplKlw.bbchybrid', error => results.push(error));
   assert.equal(h.launches.length,0); assert.equal(h.controls.length,0);
   const xhr = h.requestsHTTP[0];
-  assert.equal(xhr.method,'POST'); assert.equal(xhr.url,'http://127.0.0.1:28199/launch/bbciplayer');
+  assert.equal(xhr.method,'POST'); assert.equal(xhr.url,'http://127.0.0.1:8099/cleanframe/bbciplayer');
   xhr.status=200; xhr.responseText=JSON.stringify({ok:true,appId:'DqEoaplKlw.bbchybrid'}); xhr.onload();
   assert.deepEqual(results,[null]);
 });
