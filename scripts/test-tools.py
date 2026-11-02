@@ -436,6 +436,43 @@ with zipfile.ZipFile(target, 'a') as archive:
             self.assertNotIn(b'Traceback', result.stderr)
             self.assertFalse(marker.exists(), 'Artifact rejection must precede even a fake SDB call')
 
+    def test_tv_reuses_only_the_exact_online_sdb_device(self):
+        for name in ['scripts/tv.py', 'scripts/local_config.py', 'scripts/private_files.py']:
+            target = self.root / name
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_bytes((ROOT / name).read_bytes())
+        sdb = self.root / '.local/sdk/tools/sdb'
+        sdb.parent.mkdir(parents=True)
+        fixture = self.root / 'sdb-devices.txt'
+        calls = self.root / 'sdb-calls.jsonl'
+        sdb.write_text('#!' + sys.executable + '\n' +
+                       'import json,sys\nfrom pathlib import Path\n' +
+                       'calls=Path(' + repr(str(calls)) + ')\n' +
+                       'with calls.open("a") as out: out.write(json.dumps(sys.argv[1:])+"\\n")\n' +
+                       'if sys.argv[1:]==["devices"]: print(Path(' + repr(str(fixture)) + ').read_text())\n' +
+                       'elif sys.argv[1]=="connect": print("failed to connect"); sys.exit(1)\n' +
+                       'else: print("... successfully launched pid = 123 with debug 0")\n')
+        sdb.chmod(0o700)
+        self.config(sdk_path=str(sdb.parents[1]), profile='Synthetic profile',
+                    package_id='AbCdEf1234', app_id='AbCdEf1234.MyHome')
+        serial = '192.0.2.55:26101'
+        for row, online in [(serial+'\tdevice\tTestTV', True), (serial+'\toffline', False),
+                            ('192.0.2.56:26101\tdevice', False), ('', False)]:
+            with self.subTest(row=row):
+                fixture.write_text('List of devices attached\n'+row+'\n')
+                calls.write_text('')
+                result = subprocess.run([sys.executable, '-B', 'scripts/tv.py', 'launch', '--host', '192.0.2.55'],
+                                        cwd=self.root, capture_output=True, text=True)
+                commands = [json.loads(line) for line in calls.read_text().splitlines()]
+                self.assertEqual(commands[0], ['devices'])
+                if online:
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertNotIn(['connect', serial], commands)
+                    self.assertEqual(commands[-1], ['-s', serial, 'shell', '0', 'execute', 'AbCdEf1234.MyHome'])
+                else:
+                    self.assertNotEqual(result.returncode, 0)
+                    self.assertEqual(commands[-1], ['connect', serial])
+
     def test_shared_policy_covers_reported_names(self):
         for name in ['config.local.json', 'signing.local.json', 'author.pfx', 'author.pkcs12',
                      'author.jks', 'author.keystore', 'profiles.xml', '.local/signing.json',

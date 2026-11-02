@@ -49,9 +49,14 @@ def run(*command, quiet=False):
 
 
 serial = host + ':26101'
-connected = run('connect', serial)
-if 'connected to ' not in connected.lower() and 'already connected' not in connected.lower():
-    raise SystemExit('TV connection was not confirmed.')
+devices = run('devices', quiet=True)
+listed = any(line.split()[:2] == [serial, 'device'] for line in devices.splitlines())
+if listed:
+    print('Using existing SDB device connection.', flush=True)
+else:
+    connected = run('connect', serial)
+    if 'connected to ' not in connected.lower() and 'already connected' not in connected.lower():
+        raise SystemExit('TV connection was not confirmed.')
 if args.action == 'info':
     run('-s', serial, 'capability')
 elif args.action == 'launch':
