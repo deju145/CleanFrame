@@ -5,7 +5,7 @@ import vm from 'node:vm';
 import test from 'node:test';
 
 const source = readFileSync(new URL('../app/device.js', import.meta.url), 'utf8');
-function harness({ supported = true, throwSource = false } = {}) {
+function harness({ supported = true, throwSource = false, websocket = true, storageBlocked = false, storedToken = null } = {}) {
   let now = 0, next = 0;
   const timers = new Map(), requests = [], launches = [], sourceRequests = [], changes = [];
   let current = { type: 'HDMI', number: 2 };
@@ -14,6 +14,12 @@ function harness({ supported = true, throwSource = false } = {}) {
     getAppsInfo: (ok, fail) => requests.push({ ok, fail }),
     launch: (id, ok, fail) => launches.push({ id, ok, fail })
   };
+  const sockets = [], storage = new Map();
+  if(storedToken)storage.set('cleanframe.samsung.remote.v1',JSON.stringify(storedToken));
+  function Socket(url){this.url=url;this.sent=[];this.closed=false;sockets.push(this);}
+  Socket.prototype.send=function(text){this.sent.push(JSON.parse(text));};
+  Socket.prototype.close=function(){this.closed=true;};
+  Socket.prototype.event=function(event,data){if(this.onmessage)this.onmessage({data:JSON.stringify({event,data})});};
   const requestsHTTP = [];
   function XHR() { requestsHTTP.push(this); }
   XHR.prototype.open = function (method, url) { this.method = method; this.url = url; };
@@ -21,6 +27,10 @@ function harness({ supported = true, throwSource = false } = {}) {
   const events = {};
   const window = { XMLHttpRequest: XHR, tizen: { application }, location: {origin:'null',protocol:'file:'},
     addEventListener: (name,handler) => {events[name]=handler;} };
+  if(websocket)window.WebSocket=Socket;
+  window.localStorage={getItem:key=>storage.get(key)||null,
+    setItem:(key,value)=>{if(storageBlocked)throw Error('QuotaExceededError');storage.set(key,value);},
+    removeItem:key=>storage.delete(key)};
   if (supported) {
     window.tizen.systeminfo = { getPropertyValue: (name, ok, fail) => { assert.equal(name, 'VIDEOSOURCE'); sourceRequests.push({ ok, fail }); } };
     window.tizen.tvwindow = { getSource: (...args) => { assert.equal(args.length, 0); return current; },
@@ -35,7 +45,7 @@ function harness({ supported = true, throwSource = false } = {}) {
     now += ms;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   }
-  return { device: window.FrameDevice, requests, launches, sourceRequests, changes, requestsHTTP, events, advance, setCurrent: value => { current = value; } };
+  return { device: window.FrameDevice, requests, launches, sourceRequests, changes, requestsHTTP, sockets, storage, events, advance, setCurrent: value => { current = value; } };
 }
 
 test('a 500-app catalogue can arrive after the old eight-second deadline', () => {
@@ -168,63 +178,85 @@ test('unknown and invalid ports cannot be substituted and a newer request cancel
   h.sourceRequests[1].ok(video); assert.equal(h.changes[0].source.number, 2);
 });
 
-test('BBC sends one empty POST directly to the TV Samsung API without Vetro or native launch', () => {
-  const h=harness(), results=[];
-  h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));
-  const xhr=h.requestsHTTP[0];
-  assert.equal(xhr.method,'POST');assert.equal(xhr.url,'http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid');
-  assert.equal(xhr.body,null);assert.equal(h.requestsHTTP.length,1);assert.equal(h.launches.length,0);
-  xhr.status=200;xhr.responseText='';xhr.onload();assert.deepEqual(results,[null]);
+const remoteKey='cleanframe.samsung.remote.v1';
+const remoteApps={data:[{appId:'320TESTBBC',name:'BBC iPlayer',app_type:2}]};
+function approve(h,token='synthetic-token') {h.sockets[0].event('ms.channel.connect',{token});}
+function remoteLaunches(socket){return socket.sent.filter(frame=>frame.params.event==='ed.apps.launch');}
+
+test('BBC waits for Samsung authorization, then uses the discovered remote app ID and type', () => {
+  const h=harness(),results=[];h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));
+  const socket=h.sockets[0];
+  assert.match(socket.url,/^ws:\/\/127\.0\.0\.1:8001\/api\/v2\/channels\/samsung.remote.control\?name=/);
+  assert.equal(socket.sent.length,0);socket.event('ed.installedApp.get',remoteApps);assert.equal(socket.sent.length,0);
+  approve(h);assert.equal(socket.sent[0].params.event,'ed.installedApp.get');
+  assert.equal(JSON.parse(h.storage.get(remoteKey)).token,'synthetic-token');
+  socket.event('ed.installedApp.get',remoteApps);socket.event('ed.installedApp.get',remoteApps);approve(h);
+  const sent=remoteLaunches(socket);assert.equal(sent.length,1);
+  assert.equal(sent[0].params.data.appId,'320TESTBBC');assert.equal(sent[0].params.data.action_type,'DEEP_LINK');
+  assert.equal(results.length,0);h.advance(500);assert.deepEqual(results,[null]);assert.equal(socket.closed,true);
+  assert.equal(h.requestsHTTP.length,0);assert.equal(h.launches.length,0);
 });
-test('BBC accepts empty successful HTTP responses and reports API rejection statuses', () => {
-  for(const status of [200,201,204,400,401,403,404,500]) {
-    const h=harness();let result;
-    h.device.launchApp('DqEoaplKlw.bbchybrid',error=>{result=error;});
-    const xhr=h.requestsHTTP[0];xhr.status=status;xhr.responseText='';xhr.onload();
-    if(status<300)assert.equal(result,null);else assert.match(result.detail,new RegExp('HTTP '+status));
+test('BBC reuses only a matching saved token and stores rotated authorization', () => {
+  const h=harness({storedToken:{origin:'http://127.0.0.1:8001',token:'old-token'}});
+  h.device.launchApp('DqEoaplKlw.bbchybrid',()=>{});assert.match(h.sockets[0].url,/&token=old-token$/);
+  approve(h,'new-token');assert.equal(JSON.parse(h.storage.get(remoteKey)).token,'new-token');
+  for(const record of [{origin:'http://192.0.2.55:8001',token:'other-tv'}, {origin:'http://127.0.0.1:8001',token:'bad&token'}]){
+    const other=harness({storedToken:record});other.device.launchApp('DqEoaplKlw.bbchybrid',()=>{});
+    assert.ok(!other.sockets[0].url.includes('&token='));
   }
 });
-test('BBC rejection shows a bounded server error and only the authentication scheme', () => {
-  const h=harness();let error;
-  h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});
-  const xhr=h.requestsHTTP[0];xhr.status=401;
-  xhr.responseText=JSON.stringify({error:{message:'Caller not authorized; token=synthetic-secret'},token:'never-display-this-field'});
-  xhr.getResponseHeader=name=>{assert.equal(name,'WWW-Authenticate');return 'Bearer realm="tv", nonce="private-nonce"';};
-  xhr.onload();
-  assert.match(error.detail,/Caller not authorized/);assert.match(error.detail,/token=\[redacted\]/);
-  assert.match(error.detail,/Auth scheme: Bearer/);
-  for(const value of ['synthetic-secret','never-display-this-field','private-nonce'])assert.ok(!error.detail.includes(value));
-  assert.equal(h.requestsHTTP.length,1);assert.equal(h.launches.length,0);
+test('BBC denial clears the matching token, closes and never retries or submits a launch', () => {
+  const h=harness({storedToken:{origin:'http://127.0.0.1:8001',token:'private-token'}}),results=[];
+  h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));const socket=h.sockets[0];
+  const late=socket.onmessage;socket.event('ms.channel.unauthorized',{});
+  late({data:JSON.stringify({event:'ms.channel.connect',data:{token:'late-token'}})});
+  assert.match(results[0].message,/denied remote access/);assert.ok(!JSON.stringify(results).includes('private-token'));
+  assert.equal(h.storage.has(remoteKey),false);assert.equal(socket.closed,true);assert.equal(socket.sent.length,0);assert.equal(h.sockets.length,1);
 });
-test('BBC rejection does not expose arbitrary HTML and handles unreadable auth headers', () => {
-  const h=harness();let error;
-  h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});
-  const xhr=h.requestsHTTP[0];xhr.status=401;xhr.responseText='<html>private diagnostic payload</html>';
-  xhr.getResponseHeader=()=>{throw Error('SecurityError');};xhr.onload();
-  assert.match(error.detail,/No JSON error message exposed/);assert.match(error.detail,/Auth scheme: not exposed/);
-  assert.ok(!error.detail.includes('private diagnostic payload'));
+test('BBC missing, ambiguous and malformed app lists never launch another application', () => {
+  for(const data of [{data:[]},{data:[{name:'Other app',appId:'other',app_type:2}]},
+    {data:[{name:'BBC iPlayer',appId:'one'},{name:'BBC iPlayer',appId:'two'}]},
+    {data:[{name:'BBC iPlayer',appId:'bad/id'}]},'not-json',{}]){
+    const h=harness();let error;h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});approve(h);
+    h.sockets[0].event('ed.installedApp.get',data);assert.ok(error);assert.equal(remoteLaunches(h.sockets[0]).length,0);
+  }
 });
-test('BBC network failure reports widget context and never retries or calls Vetro', () => {
-  const h=harness(), results=[];
-  h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));
-  h.requestsHTTP[0].onerror();h.requestsHTTP[0].status=200;h.requestsHTTP[0].onload();
-  assert.equal(results.length,1);assert.match(results[0].detail,/Origin: null/);assert.match(results[0].detail,/HTTP 0/);
-  assert.equal(h.requestsHTTP.length,1);assert.equal(h.launches.length,0);
+test('BBC exact native ID wins over name matches and native app types use NATIVE_LAUNCH', () => {
+  const h=harness();h.device.launchApp('DqEoaplKlw.bbchybrid',()=>{});approve(h);
+  h.sockets[0].event('ed.installedApp.get',JSON.stringify({data:[{appId:'DqEoaplKlw.bbchybrid',name:'BBC iPlayer',app_type:4},{appId:'other',name:'BBC iPlayer',app_type:2}]}));
+  assert.equal(remoteLaunches(h.sockets[0])[0].params.data.appId,'DqEoaplKlw.bbchybrid');
+  assert.equal(remoteLaunches(h.sockets[0])[0].params.data.action_type,'NATIVE_LAUNCH');
 });
-test('BBC timeout completes once and ignores late HTTP success', () => {
-  const h=harness(), results=[];
-  h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));
-  h.requestsHTTP[0].ontimeout();h.requestsHTTP[0].status=200;h.requestsHTTP[0].onload();h.advance(20000);
-  assert.equal(results.length,1);assert.match(results[0].message,/timed out/);
-  const late=harness(), bounded=[];
-  late.device.launchApp('DqEoaplKlw.bbchybrid',error=>bounded.push(error));late.advance(20000);
-  late.requestsHTTP[0].status=200;late.requestsHTTP[0].onload();assert.equal(bounded.length,1);
+test('BBC timeout and cancellation close sockets and prevent late launches', () => {
+  for(const cancel of [false,true]){
+    const h=harness(),results=[];h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));
+    const socket=h.sockets[0],late=socket.onmessage;
+    if(cancel)h.device.cancelLaunch();else h.advance(35000);
+    late({data:JSON.stringify({event:'ms.channel.connect',data:{token:'late'}})});
+    assert.equal(results.length,1);assert.equal(socket.closed,true);assert.equal(socket.sent.length,0);
+    if(!cancel)assert.match(results[0].message,/timed out/);
+  }
 });
-test('BBC network diagnosis includes a reported browser policy violation', () => {
-  const h=harness();let error;
-  h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});
-  h.events.securitypolicyviolation({blockedURI:'http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid',effectiveDirective:'connect-src'});
-  h.requestsHTTP[0].onerror();assert.match(error.detail,/Browser blocked: connect-src/);
+test('BBC pending connection is cancelled when another app is launched', () => {
+  const h=harness();h.device.launchApp('DqEoaplKlw.bbchybrid',()=>{});const old=h.sockets[0],late=old.onmessage;
+  h.device.launchApp('org.tizen.netflix-app',()=>{});late({data:JSON.stringify({event:'ms.channel.connect',data:{}})});
+  assert.equal(old.closed,true);assert.equal(old.sent.length,0);assert.equal(h.launches[0].id,'org.tizen.netflix-app');
+});
+test('BBC unsupported sockets, storage failures and malformed tokens do not launch', () => {
+  const absent=harness({websocket:false});let error;absent.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});assert.match(error.message,/unavailable/);
+  for(const options of [{storageBlocked:true},{}]){
+    const h=harness(options);h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});
+    approve(h,options.storageBlocked?'valid-token':'invalid&token');assert.ok(error);assert.equal(h.sockets[0].sent.length,0);
+  }
+});
+test('BBC protocol and transport errors finish once without exposing token-bearing socket URLs', () => {
+  for(const event of ['ms.error','ms.channel.error','socket-error','socket-close']){
+    const h=harness({storedToken:{origin:'http://127.0.0.1:8001',token:'never-show-this'}}),results=[];
+    h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));const socket=h.sockets[0];
+    if(event==='socket-error')socket.onerror({});else if(event==='socket-close')socket.onclose({code:1008});else socket.event(event,{token:'secret-response'});
+    h.advance(40000);assert.equal(results.length,1);assert.ok(!JSON.stringify(results).includes('never-show-this'));
+    assert.ok(!JSON.stringify(results).includes('secret-response'));assert.equal(socket.closed,true);
+  }
 });
 
 test('UK package variants resolve to monochrome marks without discovery', () => {

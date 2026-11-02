@@ -35,9 +35,11 @@ def target_overlay(root, host, manifest):
     origin = 'http://' + host + ':8001'
     source = (root / 'app/device.js').read_bytes()
     marker = ('origin="' + SOURCE_ORIGIN + '"').encode()
-    if manifest.count(marker) != 1 or source.count(SOURCE_ORIGIN.encode()) != 1:
+    ws_marker = ('origin="' + SOURCE_ORIGIN.replace('http:', 'ws:') + '"').encode()
+    if manifest.count(marker) != 1 or manifest.count(ws_marker) != 1 or source.count(SOURCE_ORIGIN.encode()) != 1:
         raise ValueError('Samsung API overlay requires the expected single fixed-origin source template.')
     return {
-        'config.xml': manifest.replace(marker, ('origin="' + origin + '"').encode()),
+        'config.xml': manifest.replace(marker, ('origin="' + origin + '"').encode()).replace(
+            ws_marker, ('origin="' + origin.replace('http:', 'ws:') + '"').encode()),
         'device.js': source.replace(SOURCE_ORIGIN.encode(), origin.encode()),
     }

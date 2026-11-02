@@ -77,6 +77,25 @@ function installHarness({ seed, legacy, mock, catalog, minuteMs, catalogFailure,
   if (noFontAPI) Object.defineProperty(document, 'fonts', { configurable: true, value: undefined });
   if (!mock) return;
   window.__tv = { catalog, catalogFailure: !!catalogFailure, launchFailure: false, holdCatalog: false, pending: [], calls: [], catalogCalls: 0 };
+  __tv.remoteMode = 'success'; __tv.remoteSockets = []; __tv.remoteFrames = [];
+  window.WebSocket = function (url) {
+    const socket=this;socket.url=url;socket.closed=false;__tv.remoteSockets.push(socket);
+    const mode=__tv.remoteMode;
+    setTimeout(()=>{
+      if(socket.closed)return;
+      if(mode==='network'){if(socket.onerror)socket.onerror({});return;}
+      if(mode==='hold')return;
+      const event=mode==='denied'?'ms.channel.unauthorized':'ms.channel.connect';
+      if(socket.onmessage)socket.onmessage({data:JSON.stringify({event,data:{token:'qa-remote-token'}})});
+    },20);
+  };
+  window.WebSocket.prototype.close=function(){this.closed=true;};
+  window.WebSocket.prototype.send=function(text){
+    const frame=JSON.parse(text);__tv.remoteFrames.push(frame);
+    if(frame.params.event==='ed.installedApp.get')setTimeout(()=>{
+      if(!this.closed && this.onmessage)this.onmessage({data:JSON.stringify({event:'ed.installedApp.get',data:{data:[{appId:'320BBCQA',name:'BBC iPlayer',app_type:2}]}})});
+    },0);
+  };
   window.tizen = {
     ApplicationControlData: function (key, value) { this.key = key; this.value = value; },
     ApplicationControl: function (operation, uri, mime, category, data) { Object.assign(this, { operation, uri, mime, category, data }); },
@@ -250,46 +269,41 @@ try {
       {id:'OCaxbgg9v6.chfourctv',appId:'OCaxbgg9v6.chfourctv',name:'Channel 4'},
       {id:'OEvCiupaFR.ITVHub',appId:'OEvCiupaFR.ITVHub',name:'itvX'},
       {id:'OfLpiC2MZQ.Player',appId:'OfLpiC2MZQ.Player',name:'STV Player'}];
-    let response={ok:true,appId:'DqEoaplKlw.bbchybrid'},status=200,requests=0;
-    await page({seed:baseline({dock:pins.map(a=>a.id),appRecords:pins,lastApp:'stremio'}),catalogFailure:true},async page=>{
-      await page.route('http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid',route=>{
-        requests++;return route.fulfill({status,contentType:'application/json',headers:{'Access-Control-Allow-Origin':'*'},body:JSON.stringify(response)});
-      });
-    });
+    await page({seed:baseline({dock:pins.map(a=>a.id),appRecords:pins,lastApp:'stremio'}),catalogFailure:true});
     const expected=pins.map(a=>a.id).concat('cleanframe.hdmi4','cleanframe.hdmi5');
     check('Saved five-app dock gains input shortcuts once',same((await state()).dock,expected));
     const marks=await current.locator('#dock .mark[data-mark]').evaluateAll(elements=>elements.map(e=>e.dataset.mark));
     check('Saved UK and input pins all use bundled monochrome marks',same(marks,['stremio','bbciplayer','channel4','itvx','stv','livetv','ps5']),marks);
     check('Saved UK dock has no coloured native artwork',await current.locator('#dock [data-native-icon]').count()===0);
     await current.screenshot({path:out+'uk-monochrome-dock.png'});
-    const acknowledged=current.waitForResponse(r=>r.url()==='http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid' && r.status()===200);
-    await act('home.app.DqEoaplKlw.bbchybrid'); await acknowledged; await current.waitForLoadState('networkidle');
-    check('BBC sends the fixed TV-local request',requests===1 && await current.evaluate(()=>__tv.calls.length===0));
-    current.__expectedFailures.push('/api/v2/applications/');
-    status=401;response={error:'Caller not authorized'};
-    await current.evaluate(()=>window.dispatchEvent(new Event('focus')));
-    await scene('home'); await act('home.app.DqEoaplKlw.bbchybrid');
+    await act('home.app.DqEoaplKlw.bbchybrid');
+    await current.waitForFunction(()=>__tv.remoteFrames.some(frame=>frame.params.event==='ed.apps.launch'));
+    await current.waitForTimeout(550);
+    const remote=await current.evaluate(()=>({url:__tv.remoteSockets[0].url,frames:__tv.remoteFrames,calls:__tv.calls,token:JSON.parse(localStorage.getItem('cleanframe.samsung.remote.v1'))}));
+    check('BBC uses Samsung WebSocket and no native application launch',remote.url.startsWith('ws://127.0.0.1:8001/') && remote.calls.length===0);
+    check('BBC launches only the discovered remote app ID',remote.frames.filter(frame=>frame.params.event==='ed.apps.launch').length===1 && remote.frames[1].params.data.appId==='320BBCQA');
+    check('Samsung authorization is saved inside the widget',remote.token.token==='qa-remote-token');
+    await current.evaluate(()=>{__tv.remoteMode='denied';window.dispatchEvent(new Event('focus'));});
+    await scene('home');await act('home.app.DqEoaplKlw.bbchybrid');
     await current.waitForFunction(()=>ShoreQA.state().view==='message');
     const denial=await current.locator('#stage').innerText();
-    check('Samsung API denial gives a visible HTTP error',denial.includes('HTTP 401'));
-    check('Samsung API denial shows the server explanation',denial.includes('API message: Caller not authorized'));
-    await current.screenshot({path:out+'bbc-api-authorization.png'});
+    check('Samsung pairing denial gives a visible error',denial.includes('Samsung denied remote access'));
+    check('Denied token is removed',await current.evaluate(()=>localStorage.getItem('cleanframe.samsung.remote.v1')===null));
+    await current.screenshot({path:out+'bbc-remote-authorization.png'});
     await nav('back');await editor();await remove('cleanframe.hdmi5');
     await current.reload();await ready();
     check('Removed input stays removed after restart',!(await state()).dock.includes('cleanframe.hdmi5'));
   });
-  await run('Fork BBC network diagnostics', async () => {
+  await run('Fork BBC remote connection and cancellation', async () => {
     const id='DqEoaplKlw.bbchybrid';
-    await page({seed:baseline({dock:[id],appRecords:[{id,appId:id,name:'BBC iPlayer'}],lastApp:id})},async page=>{
-      await page.route('http://127.0.0.1:8001/api/v2/applications/DqEoaplKlw.bbchybrid',route=>route.abort('connectionrefused'));
-    });
-    current.__expectedFailures.push('/api/v2/applications/');
-    await act('home.app.'+id);
-    await current.waitForFunction(()=>ShoreQA.state().view==='message');
-    const text=await current.locator('#stage').innerText();
-    check('Failed Samsung POST shows widget origin and HTTP evidence',text.includes('Origin:') && text.includes('HTTP 0'));
-    check('Network diagnosis does not use public native launch',await current.evaluate(()=>__tv.calls.length===0));
-    await current.screenshot({path:out+'bbc-network-diagnostic.png'});
+    await page({seed:baseline({dock:[id],appRecords:[{id,appId:id,name:'BBC iPlayer'}],lastApp:id})});
+    await current.evaluate(()=>{__tv.remoteMode='network';});
+    await act('home.app.'+id);await current.waitForFunction(()=>ShoreQA.state().view==='message');
+    check('Remote transport failure identifies the stage',(await current.locator('#stage').innerText()).includes('Stage: authorization'));
+    check('Remote failures do not use native launch',await current.evaluate(()=>__tv.calls.length===0));
+    await nav('back');await scene('home');await current.evaluate(()=>{__tv.remoteMode='hold';});
+    await act('home.app.'+id);await nav('back');
+    check('Back cancels pending authorization',await current.evaluate(()=>__tv.remoteSockets[1].closed && __tv.remoteFrames.length===0));
   });
   await run('Utility focus clears the app highlight', async () => {
     await page();
