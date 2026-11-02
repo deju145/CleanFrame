@@ -184,6 +184,26 @@ test('BBC accepts empty successful HTTP responses and reports API rejection stat
     if(status<300)assert.equal(result,null);else assert.match(result.detail,new RegExp('HTTP '+status));
   }
 });
+test('BBC rejection shows a bounded server error and only the authentication scheme', () => {
+  const h=harness();let error;
+  h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});
+  const xhr=h.requestsHTTP[0];xhr.status=401;
+  xhr.responseText=JSON.stringify({error:{message:'Caller not authorized; token=synthetic-secret'},token:'never-display-this-field'});
+  xhr.getResponseHeader=name=>{assert.equal(name,'WWW-Authenticate');return 'Bearer realm="tv", nonce="private-nonce"';};
+  xhr.onload();
+  assert.match(error.detail,/Caller not authorized/);assert.match(error.detail,/token=\[redacted\]/);
+  assert.match(error.detail,/Auth scheme: Bearer/);
+  for(const value of ['synthetic-secret','never-display-this-field','private-nonce'])assert.ok(!error.detail.includes(value));
+  assert.equal(h.requestsHTTP.length,1);assert.equal(h.launches.length,0);
+});
+test('BBC rejection does not expose arbitrary HTML and handles unreadable auth headers', () => {
+  const h=harness();let error;
+  h.device.launchApp('DqEoaplKlw.bbchybrid',value=>{error=value;});
+  const xhr=h.requestsHTTP[0];xhr.status=401;xhr.responseText='<html>private diagnostic payload</html>';
+  xhr.getResponseHeader=()=>{throw Error('SecurityError');};xhr.onload();
+  assert.match(error.detail,/No JSON error message exposed/);assert.match(error.detail,/Auth scheme: not exposed/);
+  assert.ok(!error.detail.includes('private diagnostic payload'));
+});
 test('BBC network failure reports widget context and never retries or calls Vetro', () => {
   const h=harness(), results=[];
   h.device.launchApp('DqEoaplKlw.bbchybrid',error=>results.push(error));

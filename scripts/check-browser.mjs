@@ -266,11 +266,14 @@ try {
     await act('home.app.DqEoaplKlw.bbchybrid'); await acknowledged; await current.waitForLoadState('networkidle');
     check('BBC sends the fixed TV-local request',requests===1 && await current.evaluate(()=>__tv.calls.length===0));
     current.__expectedFailures.push('/api/v2/applications/');
-    status=403;response={error:'denied'};
+    status=401;response={error:'Caller not authorized'};
     await current.evaluate(()=>window.dispatchEvent(new Event('focus')));
     await scene('home'); await act('home.app.DqEoaplKlw.bbchybrid');
     await current.waitForFunction(()=>ShoreQA.state().view==='message');
-    check('Samsung API denial gives a visible HTTP error',(await current.locator('#stage').innerText()).includes('HTTP 403'));
+    const denial=await current.locator('#stage').innerText();
+    check('Samsung API denial gives a visible HTTP error',denial.includes('HTTP 401'));
+    check('Samsung API denial shows the server explanation',denial.includes('API message: Caller not authorized'));
+    await current.screenshot({path:out+'bbc-api-authorization.png'});
     await nav('back');await editor();await remove('cleanframe.hdmi5');
     await current.reload();await ready();
     check('Removed input stays removed after restart',!(await state()).dock.includes('cleanframe.hdmi5'));

@@ -132,13 +132,33 @@
         + (lastBBCPolicy ? ' Browser blocked: ' + lastBBCPolicy + '.' : '');
     }
     function finish(error) { if (finished) return; finished = true; done(error); }
+    function rejectionDetail() {
+      var note = 'HTTP ' + xhr.status + '.', reason = '', challenge = '';
+      try {
+        var body = JSON.parse(xhr.responseText), error = body && body.error;
+        reason = typeof error === 'string' ? error : error && typeof error.message === 'string' ? error.message
+          : body && typeof body.message === 'string' ? body.message : '';
+      } catch (err) { /* Do not display arbitrary HTML or authentication response fields. */ }
+      if (reason) {
+        reason = reason.replace(/[\x00-\x1f\x7f]/g, ' ').replace(/\b(Bearer|Basic)\s+\S+/gi, '$1 [redacted]')
+          .replace(/\b(token|nonce|password|secret)\s*[:=]\s*\S+/gi, '$1=[redacted]');
+        note += ' API message: ' + reason.slice(0, 180) + '.';
+      } else note += ' No JSON error message exposed.';
+      try {
+        var header = xhr.getResponseHeader('WWW-Authenticate') || '';
+        var scheme = /^[A-Za-z][A-Za-z0-9_-]*/.exec(header);
+        if (scheme) challenge = scheme[0];
+      } catch (err) { /* Some TV engines do not expose this response header. */ }
+      note += ' Auth scheme: ' + (challenge || 'not exposed') + '.';
+      return detail(note);
+    }
     try {
       xhr.open('POST', BBC_URL, true);
       xhr.timeout = 18000;
       xhr.onload = function () {
         // A 2xx response acknowledges submission, not visible app startup.
         if (xhr.status >= 200 && xhr.status < 300) { finish(null); return; }
-        finish({message: 'Samsung TV API rejected the BBC launch.', detail: detail('HTTP ' + xhr.status + '.')});
+        finish({message: 'Samsung TV API rejected the BBC launch.', detail: rejectionDetail()});
       };
       xhr.onerror = function () {
         finish({message: 'BBC launch request failed.', detail: detail('No readable HTTP response (HTTP 0).')});

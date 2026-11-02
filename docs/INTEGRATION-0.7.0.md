@@ -53,3 +53,7 @@ The dynamic-address proposal was not published. This revision adds no wildcard o
 Public exports do not read the local setting. The configuration file itself is never bundled. The SDK-signed widget necessarily contains its selected endpoint; keep personal builds private. The Mac is needed for packaging and installation only.
 
 Fixed-address revision validation: lint/resources, 18 adapter checks, 18 tooling tests and 23 focused browser checks passed. The tooling tests verify the generated exact origin, unchanged privilege scope and identity, source immutability, invalid-host rejection, public-export isolation and the synthetic SDK signing path. A fixed-origin unsigned test widget, public-source audit and public unsigned export also passed. No TV or real certificates were accessed.
+
+## Authorization diagnostic revision
+
+The owner verified the fixed LAN origin in both generated manifest and runtime, but the widget still received HTTP 401. This does not identify the failing authorization check. Error screens now include a bounded JSON error message and, if exposed, only the WWW-Authenticate scheme. Challenge parameters, arbitrary HTML and unrelated response fields are not displayed; common credential assignments are redacted. No address, privilege, pairing or launch-path changes are made. Validation: lint/resources, 20 adapter checks, three legacy Vetro checks, 24 focused browser checks and a fixed-origin unsigned widget pass.
