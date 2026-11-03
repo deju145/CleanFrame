@@ -489,7 +489,7 @@ try {
       await current.waitForSelector('[data-action="input.1"]');
       const entries = await current.locator('.section-inputs .setting-choice').allTextContents();
       check('Inputs reflect actual ports and sleeping/active status ' + layout + '/' + width,
-        entries.length === 3 && entries.some(x => /HDMI 1.*Disconnected/.test(x)) && entries.some(x => /HDMI 2.*Active/.test(x)) && !entries.some(x => /HDMI 4/.test(x)), entries);
+        entries.length === 4 && entries.some(x => /HDMI 1.*Disconnected/.test(x)) && entries.some(x => /HDMI 2.*Active/.test(x)) && entries.some(x => /HDMI 5.*Not reported/.test(x)) && !entries.some(x => /HDMI 4/.test(x)), entries);
       check('Inputs fit and retain one focus ' + layout + '/' + width, await current.locator('.section-inputs .setting-choice').evaluateAll(elements => {
         const stage = document.getElementById('stage').getBoundingClientRect();
         return ShoreQA.where().focusCount === 1 && elements.every(e => { const r=e.getBoundingClientRect(); return r.top>=stage.top && r.bottom<=stage.bottom && r.left>=stage.left && r.right<=stage.right; });
@@ -520,8 +520,14 @@ try {
     await nav('back'); check('Unavailable inputs remain escapable', (await state()).settingsGroup === 'samsung');
     await closePage(); await page(); await current.evaluate(() => { __tv.videoSources = { connected: [], disconnected: [] }; });
     await group('samsung'); await act('samsung.inputs');
-    await current.waitForSelector('[data-action="inputs.retry"]');
-    check('Empty inventory is truthful', (await current.locator('#stage').innerText()).includes('No HDMI inputs were reported'));
+    await current.waitForSelector('[data-action="input.5"]');
+    check('Empty inventory offers only explicitly manual HDMI 5', await current.locator('.section-inputs .setting-choice').count() === 1 && (await current.locator('[data-action="input.5"]').innerText()).includes('Not reported by TV'));
+    await act('input.5'); await current.waitForFunction(() => __tv.calls.some(c => c.id === 'org.tizen.tv-viewer'));
+    check('Manual HDMI 5 reaches source selection then native viewer', await current.evaluate(() => __tv.calls[0].method === 'setSource' && __tv.calls[0].number === 5 && __tv.calls[1].id === 'org.tizen.tv-viewer'));
+    await closePage(); await page(); await current.evaluate(() => { __tv.sourceFailure = true; });
+    await group('samsung'); await act('samsung.inputs'); await current.waitForSelector('[data-action="input.5"]');
+    await act('input.5'); await current.waitForFunction(() => ShoreQA.state().view === 'message');
+    check('Rejected manual HDMI 5 stays an error with viewer closed', (await current.locator('#stage').innerText()).includes('The TV rejected HDMI 5.') && await current.evaluate(() => __tv.calls.length === 1));
   });
   await run('Real catalogue and native launch boundary', async () => {
     await page(); await library();

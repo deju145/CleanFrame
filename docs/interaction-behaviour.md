@@ -68,6 +68,15 @@ Installed-app discovery allows up to 20 seconds for large TV catalogues; launch 
 
 Settings → Samsung → Inputs opens the HDMI chooser. The adapter reads the TV’s actual connected and disconnected source records, including sleeping devices that may be listed as disconnected. It does not guess a universal port count or add a fourth default Home control. Missing APIs, denied access and discovery failure produce an unavailable/error state rather than invented ports. The active source comes from the synchronous `tvwindow.getSource()` return value.
 
+This integration build also offers the explicitly requested HDMI 5 shortcut when
+successful discovery omits that port. The row says “Not reported by TV — try
+manually” and does not claim a connected device. A reported HDMI 5 record takes
+precedence and is never duplicated. The PS5 dock shortcut uses the same request
+path. Samsung must accept source 5 and its viewer must open before the request
+reports success; rejection remains an error and never substitutes another port.
+This is an owner-requested manual source attempt, not evidence that every TV
+has five HDMI inputs. Its physical switching result is still unverified.
+
 Up/Down selects an input. OK requests that exact source; Back returns to Samsung Settings. Retry after a failed load rereads the available sources. A routing error remains an error, and a failed handoff leaves the launcher usable. Timed-out or cancelled requests cannot start a later routing or viewer action; a native request already sent to the TV may itself be uncancellable.
 
 Selecting a source, opening Samsung’s viewer, seeing the expected HDMI picture and waking a CEC device are separate results. The portable implementation does not import firmware-specific viewer payloads or claim to wake a sleeping device. No input discovery or polling runs during hidden startup.

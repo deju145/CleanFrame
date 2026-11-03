@@ -66,6 +66,12 @@
         }
         if (video && Array.isArray(video.disconnected)) video.disconnected.forEach(function (src) { record(src, false); });
         if (video && Array.isArray(video.connected)) video.connected.forEach(function (src) { record(src, true); });
+        // This build has an explicit PS5/HDMI 5 shortcut. Offer its requested
+        // source even when enumeration omits it, without claiming connection.
+        if (!byPort['5']) {
+          record({ type: 'HDMI', number: 5 }, false);
+          byPort['5'].manual = true;
+        }
         list.sort(function (a, b) { return a.number - b.number; });
         finish(null, list);
       }, function (err) { finish(failure(err)); });
@@ -91,6 +97,10 @@
       var input = null;
       list.some(function (item) { if (item.number === port) { input = item; return true; } return false; });
       if (!input) { finish({ message: 'This HDMI input is no longer available.' }); return; }
+      function rejected(error) {
+        if (input.manual) finish({ message: 'The TV rejected HDMI 5.', detail: error && (error.message || error.name) || 'This input was not reported by the TV.' });
+        else finish(failure(error));
+      }
       try {
         tvw.setSource(input.source, function (selected) {
           if (finished) return;
@@ -100,8 +110,8 @@
               finish({ message: 'The input was selected, but the TV viewer could not open.', detail: 'Use the remote’s Source control to view the input.' });
             });
           } catch (error) { finish({ message: 'The input was selected, but the TV viewer could not open.' }); }
-        }, function (error) { if (!finished) finish(failure(error)); });
-      } catch (error) { finish(failure(error)); }
+        }, function (error) { if (!finished) rejected(error); });
+      } catch (error) { rejected(error); }
     });
   }
   // HbbTV handoff follows AeroTizen PR #1; retained MIT notice: licenses/AeroTizen-LICENSE.txt.
