@@ -21,6 +21,8 @@ def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--host', required=True)
     parser.add_argument('--sdb', default='~/tizen-studio/tools/sdb')
+    parser.add_argument('--control-request', action='store_true',
+                        help='Stage the fixed Request.json for the separate guarded controller')
     args = parser.parse_args()
     host = str(ipaddress.IPv4Address(args.host))
     sdb = str(Path(args.sdb).expanduser())
@@ -28,6 +30,8 @@ def main():
     folder = Path(__file__).resolve().parent
     manifest = json.loads((folder / 'manifest.json').read_text())
     names = ['Query.dll', 'Query.runtimeconfig.json']
+    if args.control_request:
+        names.append('Request.json')
     for name in names:
         if hashlib.sha256((folder / name).read_bytes()).hexdigest() != manifest['files'][name]:
             raise RuntimeError('Helper checksum failed: ' + name)
@@ -59,6 +63,9 @@ def main():
         port = listener.getsockname()[1]
         cleanup = 'rm -f ' + ' '.join([stage, claimed, *paths.values()])
         checks = '\n'.join(f"printf '%s  %s\\n' '{manifest['files'][name]}' '{paths[name]}' | sha256sum -c - >/dev/null" for name in names)
+        invocation = '/usr/bin/dotnet ' + paths['Query.dll']
+        if args.control_request:
+            invocation += ' ' + paths['Request.json']
         # Unique file prefix also gives dotnet the matching runtimeconfig basename.
         script = f'''set -u
 umask 077
@@ -69,7 +76,7 @@ set -eu
 test "$(id -u)" = 901
 test -x /usr/bin/dotnet
 {checks}
-/usr/bin/dotnet {paths['Query.dll']}
+{invocation}
 ) >&3 2>&3
 result=$?
 {cleanup}

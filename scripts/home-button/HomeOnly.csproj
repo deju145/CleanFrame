@@ -11,5 +11,6 @@
   <ItemGroup>
     <Compile Include="HomeOnly.cs" />
     <Compile Include="HomeOnlyPolicy.cs" />
+    <Compile Include="RequestFile.cs" />
   </ItemGroup>
 </Project>

@@ -8,5 +8,6 @@
   <ItemGroup>
     <Compile Include="PolicyTests.cs" />
     <Compile Include="HomeOnlyPolicy.cs" />
+    <Compile Include="RequestFile.cs" />
   </ItemGroup>
 </Project>

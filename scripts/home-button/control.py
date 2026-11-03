@@ -147,16 +147,13 @@ def run_action(args):
         if args.confirm_target != profile['target']:
             raise ValueError('Apply requires --confirm-target with the exact resolved app ID.')
         plan = json.loads((HERE / 'verified-plan.json').read_bytes())
-        if plan['original_sha256'] != profile['original_sha256'] or not plan['result']['Success'] or plan['result']['WriteAttempted']:
+        if plan.get('transport_protocol') != 2 or plan['original_sha256'] != profile['original_sha256'] or not plan['result']['Success'] or plan['result']['WriteAttempted']:
             raise ValueError('No successful read-only plan for this original snapshot.')
-    request = {'schema': 1, 'target': profile['target'], 'package': profile['package'],
+    request = {'schema': 1, 'transport_protocol': 2, 'action': args.action,
+               'target': profile['target'], 'package': profile['package'],
                'original_sha256': profile['original_sha256'],
                'original_base64': base64.b64encode(raw).decode()}
     runtime = json.loads((HERE / 'control-runtimeconfig.json').read_bytes())
-    runtime['runtimeOptions']['configProperties'] = {
-        'CleanFrame.HomeAction': args.action,
-        'CleanFrame.HomeRequest': base64.b64encode(json.dumps(request).encode()).decode()
-    }
     stamp = time.strftime('%Y%m%dT%H%M%SZ', time.gmtime()) + '-' + uuid.uuid4().hex[:12]
     job = HERE / 'runs' / (args.action + '-' + stamp)
     job.mkdir(mode=0o700, parents=True)
@@ -177,17 +174,18 @@ def run_action(args):
     write_private(job / 'query.py', runner.encode(), 0o600)
     write_private(job / 'Query.dll', (HERE / 'HomeOnly.dll').read_bytes(), 0o600)
     write_private(job / 'Query.runtimeconfig.json', json.dumps(runtime).encode(), 0o600)
-    manifest = {'files': {name: sha((job / name).read_bytes()) for name in ['Query.dll', 'Query.runtimeconfig.json']}}
+    write_private(job / 'Request.json', json.dumps(request).encode(), 0o600)
+    manifest = {'files': {name: sha((job / name).read_bytes()) for name in ['Query.dll', 'Query.runtimeconfig.json', 'Request.json']}}
     write_private(job / 'manifest.json', json.dumps(manifest).encode(), 0o600)
     print('Action:', args.action, '| Target:', profile['target'], flush=True)
-    process = subprocess.run([sys.executable, str(job / 'query.py'), '--host', profile['host'], '--sdb', profile['sdb']])
+    process = subprocess.run([sys.executable, str(job / 'query.py'), '--host', profile['host'], '--sdb', profile['sdb'], '--control-request'])
     if process.returncode:
         raise RuntimeError('Control action did not complete successfully. Keep all receipts. Inspect state before any retry.')
     receipts = list(job.glob('snapshot-*.json'))
     if len(receipts) != 1:
         raise RuntimeError('Expected one control receipt. State needs inspection.')
     receipt = json.loads(receipts[0].read_bytes())['query']
-    if receipt.get('action') != args.action or receipt.get('original_sha256') != profile['original_sha256'] or not receipt.get('result', {}).get('Success'):
+    if receipt.get('transport_protocol') != 2 or receipt.get('action') != args.action or receipt.get('original_sha256') != profile['original_sha256'] or not receipt.get('result', {}).get('Success'):
         raise RuntimeError('Control receipt verification failed; inspect before any retry.')
     if args.action == 'plan':
         if receipt['result']['WriteAttempted']:

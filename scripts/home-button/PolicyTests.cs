@@ -1,5 +1,6 @@
 using System;
 using System.Collections.Generic;
+using System.IO;
 
 sealed class FakeHome : IHomePlatform {
     public HomeState State;
@@ -103,6 +104,34 @@ class PolicyTests {
             var fake = new FakeHome { State = Original(), RefuseRestore = true }; fake.State.Main = Target;
             var result = HomeOnlyPolicy.Run(fake, Original(), Target, "restore");
             Assert(!result.Success && !result.RollbackVerified && fake.Writes == 1, "Failed restore reapplied.");
+        });
+        test("explicit request supplies action without runtime properties", () => {
+            string path = Path.GetTempFileName();
+            try {
+                File.WriteAllText(path, "{\"schema\":1,\"transport_protocol\":2,\"action\":\"plan\"}");
+                using var request = RequestFile.Read(new[] {path});
+                Assert(request.RootElement.GetProperty("action").GetString() == "plan", "Explicit action was lost.");
+            } finally { File.Delete(path); }
+        });
+        test("missing command-line request refused", () => {
+            bool refused = false;
+            try { using var request = RequestFile.Read(new string[0]); }
+            catch (Exception) { refused = true; }
+            Assert(refused, "Missing request accepted.");
+        });
+        test("obsolete protocol and unknown action refused", () => {
+            string path = Path.GetTempFileName();
+            try {
+                foreach (string json in new[] {
+                    "{\"schema\":1,\"transport_protocol\":1,\"action\":\"plan\"}",
+                    "{\"schema\":1,\"transport_protocol\":2,\"action\":\"unknown\"}"
+                }) {
+                    File.WriteAllText(path, json); bool refused = false;
+                    try { using var request = RequestFile.Read(new[] {path}); }
+                    catch (Exception) { refused = true; }
+                    Assert(refused, "Invalid request accepted.");
+                }
+            } finally { File.Delete(path); }
         });
         Console.WriteLine(passed + " policy checks passed.");
     }

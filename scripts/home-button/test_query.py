@@ -5,6 +5,10 @@ import importlib.util
 import io
 import json
 from pathlib import Path
+import shlex
+import shutil
+import subprocess
+import sys
 from types import SimpleNamespace
 import tempfile
 import unittest
@@ -33,7 +37,7 @@ class Socket:
 
 
 class Checks(unittest.TestCase):
-    def exercise(self, *, corrupt=False, connected=True, caps='cpu_arch:armv7\nplatform_version:9.0\n', output=None):
+    def exercise(self, *, corrupt=False, connected=True, caps='cpu_arch:armv7\nplatform_version:9.0\n', output=None, control=False, corrupt_request=False):
         if output is None:
             output = 'CLEANFRAME_HOME_QUERY=' + json.dumps({'uid': 901, 'architecture': 'Arm', 'values': {}}) + '\nCLEANFRAME_QUERY_CLEANUP=0\nCLEANFRAME_QUERY_EXIT=0\n'
         calls = []
@@ -43,10 +47,20 @@ class Checks(unittest.TestCase):
             for name in ['Query.dll', 'Query.runtimeconfig.json']:
                 (folder / name).write_bytes(b'test fixture')
                 files[name] = hashlib.sha256(b'test fixture').hexdigest()
+            if control:
+                payload = json.dumps({'schema': 1, 'transport_protocol': 2, 'action': 'plan'}).encode()
+                (folder / 'Request.json').write_bytes(payload)
+                files['Request.json'] = hashlib.sha256(payload).hexdigest()
+                if corrupt_request:
+                    (folder / 'Request.json').write_bytes(b'changed request')
             (folder / 'manifest.json').write_text(json.dumps({'files': files}))
             if corrupt: (folder / 'Query.dll').write_bytes(b'changed')
             original = folder / 'original.json'
             original.write_text('preserve this baseline')
+            remote = folder / 'remote'
+            remote.mkdir()
+            actual_run = subprocess.run
+            actual_popen = subprocess.Popen
 
             def run(args, **kwargs):
                 calls.append(args)
@@ -55,15 +69,28 @@ class Checks(unittest.TestCase):
                 if command == ['devices']:
                     result = HOST + ':26101 device TV\n' if connected else ''
                 elif command[-1] == 'capability': result = caps
-                elif 'push' in command and command[-2].endswith('.sh'):
-                    script = Path(command[-2]).read_text()
-                    self.assertIn('test "$(id -u)" = 901', script)
-                    self.assertIn('sha256sum -c -', script)
-                    self.assertNotIn('vconf_set', script)
+                elif 'push' in command:
+                    shutil.copyfile(command[-2], command[-1])
+                    if command[-2].endswith('.sh'):
+                        script = Path(command[-2]).read_text()
+                        self.assertIn('test "$(id -u)" = 901', script)
+                        self.assertIn('sha256sum -c -', script)
+                        self.assertNotIn('vconf_set', script)
+                        invocation = shlex.split(next(line for line in script.splitlines() if line.startswith('/usr/bin/dotnet ')))
+                        self.assertEqual(len(invocation), 3 if control else 2)
+                        if control:
+                            self.assertEqual(invocation[2], invocation[1].removesuffix('Query.dll') + 'Request.json')
+                            # Exercise actual argv and file delivery on this host,
+                            # without a TV, a network connection or runtime props.
+                            code = 'import sys,json; from pathlib import Path; assert len(sys.argv)==3; assert Path(sys.argv[1]).read_bytes()==b"test fixture"; request=json.loads(Path(sys.argv[2]).read_bytes()); assert request["transport_protocol"]==2 and request["action"]=="plan"'
+                            with patch.object(subprocess, 'Popen', actual_popen):
+                                actual_run([sys.executable, '-c', code, *invocation[1:]], check=True, capture_output=True)
+                            self.assertIn(invocation[2], next(line for line in script.splitlines() if line.startswith('trap ')))
                 return SimpleNamespace(returncode=0, stdout=result, stderr='')
 
             error = None
-            with patch.object(QUERY, '__file__', str(folder / 'query.py')), patch.object(QUERY.subprocess, 'run', side_effect=run), patch.object(QUERY.subprocess, 'Popen') as process, patch.object(QUERY.socket, 'socket', side_effect=lambda *args: Socket(output.encode())), patch('sys.argv', ['query.py', '--host', HOST]), contextlib.redirect_stdout(io.StringIO()):
+            arguments = ['query.py', '--host', HOST] + (['--control-request'] if control else [])
+            with patch.object(QUERY, '__file__', str(folder / 'query.py')), patch.object(QUERY, 'REMOTE', str(remote)), patch.object(QUERY.subprocess, 'run', side_effect=run), patch.object(QUERY.subprocess, 'Popen') as process, patch.object(QUERY.socket, 'socket', side_effect=lambda *args: Socket(output.encode())), patch('sys.argv', arguments), contextlib.redirect_stdout(io.StringIO()):
                 process.return_value.poll.return_value = 0
                 try: QUERY.main()
                 except RuntimeError as caught: error = str(caught)
@@ -96,6 +123,17 @@ class Checks(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(count, 1)
         self.assertFalse(any('connect' in call for call in calls))
+
+    def test_control_request_is_staged_hashed_and_passed_as_real_argv(self):
+        error, calls, count = self.exercise(control=True)
+        self.assertIsNone(error)
+        self.assertEqual(count, 1)
+        self.assertTrue(any('push' in call and call[-2].endswith('/Request.json') for call in calls))
+
+    def test_changed_request_refused_before_sdb(self):
+        error, calls, count = self.exercise(control=True, corrupt_request=True)
+        self.assertIn('checksum failed: Request.json', error)
+        self.assertEqual(calls, [])
 
 
 if __name__ == '__main__': unittest.main()

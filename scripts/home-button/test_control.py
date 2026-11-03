@@ -90,13 +90,17 @@ class Checks(unittest.TestCase):
             def child(args):
                 job = Path(args[1]).parent
                 runtime = json.loads((job / 'Query.runtimeconfig.json').read_bytes())
-                config = runtime['runtimeOptions']['configProperties']
-                self.assertEqual(config['CleanFrame.HomeAction'], 'plan')
-                request = json.loads(base64.b64decode(config['CleanFrame.HomeRequest']))
+                self.assertNotIn('configProperties', runtime['runtimeOptions'])
+                self.assertIn('--control-request', args)
+                request = json.loads((job / 'Request.json').read_bytes())
+                self.assertEqual(request['transport_protocol'], 2)
+                self.assertEqual(request['action'], 'plan')
                 self.assertEqual(base64.b64decode(request['original_base64']), raw)
+                manifest = json.loads((job / 'manifest.json').read_bytes())
+                self.assertEqual(manifest['files']['Request.json'], CONTROL.sha((job / 'Request.json').read_bytes()))
                 self.assertEqual(request['target'], profile['target'])
                 self.assertNotIn('No settings changed.', (job / 'query.py').read_text())
-                receipt = {'query': {'action': 'plan', 'original_sha256': profile['original_sha256'], 'result': {'Success': True, 'WriteAttempted': False}}}
+                receipt = {'query': {'transport_protocol': 2, 'action': 'plan', 'original_sha256': profile['original_sha256'], 'result': {'Success': True, 'WriteAttempted': False}}}
                 (job / 'snapshot-fixture.json').write_text(json.dumps(receipt))
                 return SimpleNamespace(returncode=0)
 

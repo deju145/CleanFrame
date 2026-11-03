@@ -93,7 +93,7 @@ def make_bundle(compiled, destination, sdk_version):
     files = {'HomeOnly.dll': compiled / 'Query.dll',
              'control-runtimeconfig.json': compiled / 'Query.runtimeconfig.json',
              'query_transport.py': SOURCE / 'query.py'}
-    for name in ['control.py', 'HomeOnly.cs', 'HomeOnlyPolicy.cs', 'HomeOnly.csproj',
+    for name in ['control.py', 'HomeOnly.cs', 'HomeOnlyPolicy.cs', 'HomeOnly.csproj', 'RequestFile.cs',
                  'HOME-ONLY.md', 'AeroTizen-LICENSE.txt']:
         files[name] = SOURCE / name
     for name, source in files.items():

@@ -88,8 +88,12 @@ The wrapper requires a successful plan before apply and an exact target
 confirmation. Each run re-stages its own hashed payloads, so restore does not
 depend on keeping TV temporary helper files. It uses the tested query transport
 with strictly checked display-message substitutions; it does not describe a
-write action as read-only. Requests travel in .NET runtime configuration;
-the query and settings-writer assemblies remain separate files in the bundle.
+write action as read-only. Requests travel in a separately hashed and staged
+`Request.json`, passed explicitly as the helper's command-line argument.
+The TV's dotnet host can ignore custom runtime-configuration properties, so
+protocol 2 never relies on those properties for its action or request. Both
+the native helper and receipt verifier require protocol 2. The query and
+settings-writer assemblies remain separate files in the bundle.
 The immutable original query is never replaced by an applied-state receipt.
 
 ## What still requires the owner

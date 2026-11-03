@@ -31,6 +31,7 @@ class Checks(unittest.TestCase):
             manifest = BUILD.make_bundle(compiled, output, BUILD.VERSION)
             self.assertIn('HomeOnly.cs', manifest['files'])
             self.assertIn('HomeOnlyPolicy.cs', manifest['files'])
+            self.assertIn('RequestFile.cs', manifest['files'])
             self.assertIn('AeroTizen-LICENSE.txt', manifest['files'])
             self.assertIn('query_transport.py', manifest['files'])
             self.assertIn('build.json', manifest['files'])

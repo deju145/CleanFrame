@@ -67,19 +67,17 @@ class HomeOnly {
     }
     static int Main(string[] args) {
         HomeResult result = null;
-        string action = AppContext.GetData("CleanFrame.HomeAction") as string;
+        string action = null;
         string originalHash = null;
         uint? uid = null;
         try {
-            if (args.Length != 0 || IntPtr.Size != 4 || RuntimeInformation.ProcessArchitecture != Architecture.Arm)
-                throw new Exception("Expected ARM32 and no command arguments.");
+            if (args.Length != 1 || IntPtr.Size != 4 || RuntimeInformation.ProcessArchitecture != Architecture.Arm)
+                throw new Exception("Expected ARM32 and one explicit request file.");
             uid = NativeHome.getuid();
             if (uid != 901) throw new Exception("Expected SDK UID 901; root is refused.");
-            string encoded = AppContext.GetData("CleanFrame.HomeRequest") as string;
-            if (encoded == null || encoded.Length > 131072) throw new Exception("Missing or oversized request.");
-            using var request = JsonDocument.Parse(Convert.FromBase64String(encoded));
+            using var request = RequestFile.Read(args);
             var root = request.RootElement;
-            if (root.GetProperty("schema").GetInt32() != 1) throw new Exception("Unknown request schema.");
+            action = root.GetProperty("action").GetString();
             string target = root.GetProperty("target").GetString();
             string package = root.GetProperty("package").GetString();
             if (!Regex.IsMatch(package ?? "", "^[A-Za-z0-9]{10}$") || !Regex.IsMatch(target ?? "", "^" + Regex.Escape(package) + "\\.[A-Za-z0-9_-]{1,52}$"))
@@ -113,7 +111,7 @@ class HomeOnly {
             } else result = HomeOnlyPolicy.Run(new NativeHome(), original, target, action);
         } catch (Exception error) { result = new HomeResult {Error = error.Message}; }
         Console.WriteLine("CLEANFRAME_HOME_QUERY=" + JsonSerializer.Serialize(new {
-            schema = 1, uid, architecture = RuntimeInformation.ProcessArchitecture.ToString(), action,
+            schema = 1, transport_protocol = 2, uid, architecture = RuntimeInformation.ProcessArchitecture.ToString(), action,
             original_sha256 = originalHash, result
         }));
         return result.Success ? 0 : 1;
