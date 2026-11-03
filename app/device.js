@@ -46,13 +46,15 @@
     return finish;
   }
   var sourceCancel = null;
+  // Native source objects are opaque: retain the original reference, never a
+  // plain object or JSON copy. This cache lasts only for this running app.
+  var knownHdmi5 = null;
   function cancelSource() { if (sourceCancel) sourceCancel(); }
   function sources(done) {
     var sys = window.tizen && window.tizen.systeminfo, tvw = window.tizen && window.tizen.tvwindow;
-    if (!sys || typeof sys.getPropertyValue !== 'function' || !tvw || typeof tvw.setSource !== 'function') { unavailable(done); return; }
+    if (!sys || (typeof sys.getPropertyValue !== 'function' && typeof sys.getPropertyValueArray !== 'function') || !tvw || typeof tvw.setSource !== 'function') { unavailable(done); return; }
     var finish = bounded(done);
-    try {
-      sys.getPropertyValue('VIDEOSOURCE', function (video) {
+    function receive(videos) {
         var list = [], byPort = {}, active = null;
         try { if (typeof tvw.getSource === 'function') active = tvw.getSource(); } catch (err) { /* Status may be unavailable while discovery still works. */ }
         function record(src, connected) {
@@ -63,19 +65,48 @@
             byPort[key] = item; list.push(item);
           }
           if (connected) { item.connected = true; item.source = src; }
+          if (src.number === 5) knownHdmi5 = item.source;
         }
-        if (video && Array.isArray(video.disconnected)) video.disconnected.forEach(function (src) { record(src, false); });
-        if (video && Array.isArray(video.connected)) video.connected.forEach(function (src) { record(src, true); });
-        // This build has an explicit PS5/HDMI 5 shortcut. Offer its requested
-        // source even when enumeration omits it, without claiming connection.
+        videos.forEach(function (video) {
+          if (video && Array.isArray(video.disconnected)) video.disconnected.forEach(function (src) { record(src, false); });
+          if (video && Array.isArray(video.connected)) video.connected.forEach(function (src) { record(src, true); });
+        });
+        // getSource() can supply a genuine source omitted by enumeration.
+        record(active, false);
+        if (!byPort['5'] && knownHdmi5) {
+          record(knownHdmi5, false);
+          byPort['5'].remembered = true;
+        }
+        // Keep the requested row reachable, but never pass a fabricated record
+        // to setSource: this TV requires SystemInfoVideoSourceInfo branding.
         if (!byPort['5']) {
-          record({ type: 'HDMI', number: 5 }, false);
-          byPort['5'].manual = true;
+          var numbers = list.map(function (item) { return item.number; }).sort(function (a, b) { return a - b; });
+          var current = active && typeof active.type === 'string' ? active.type + ' ' + active.number : 'unavailable';
+          list.push({ number: 5, name: 'HDMI 5', connected: false, active: false, manual: true, source: null,
+            detail: 'Reported HDMI inputs: ' + (numbers.join(', ') || 'none') + '. Current source: ' + current + '. Source providers: ' + videos.length + '.' });
         }
         list.sort(function (a, b) { return a.number - b.number; });
         finish(null, list);
-      }, function (err) { finish(failure(err)); });
-    } catch (err) { finish(failure(err)); }
+    }
+    function readOne() {
+      if (typeof sys.getPropertyValue !== 'function') { finish({ message: 'The TV could not list its inputs.' }); return; }
+      try { sys.getPropertyValue('VIDEOSOURCE', function (video) { receive([video]); }, function (err) { finish(failure(err)); }); }
+      catch (err) { finish(failure(err)); }
+    }
+    // Query every property provider while preserving every native record.
+    // Older firmware can reject the array API; retain its single-value route.
+    if (typeof sys.getPropertyValueArray === 'function') {
+      var settled = false, arrayTimer = null;
+      var fallback = function () { if (!settled) { settled = true; clearTimeout(arrayTimer); readOne(); } };
+      arrayTimer = setTimeout(fallback, 2000);
+      try {
+        sys.getPropertyValueArray('VIDEOSOURCE', function (videos) {
+          if (settled) return;
+          if (!Array.isArray(videos) || !videos.length) { fallback(); return; }
+          settled = true; clearTimeout(arrayTimer); receive(videos);
+        }, fallback);
+      } catch (err) { fallback(); }
+    } else readOne();
   }
   function setSource(port, done) {
     cancelSource();
@@ -97,8 +128,15 @@
       var input = null;
       list.some(function (item) { if (item.number === port) { input = item; return true; } return false; });
       if (!input) { finish({ message: 'This HDMI input is no longer available.' }); return; }
+      if (!input.source) {
+        finish({ message: 'HDMI 5 is not reported by the TV.', detail: input.detail });
+        return;
+      }
       function rejected(error) {
-        if (input.manual) finish({ message: 'The TV rejected HDMI 5.', detail: error && (error.message || error.name) || 'This input was not reported by the TV.' });
+        if (port === 5) {
+          knownHdmi5 = null;
+          finish({ message: 'The TV could not switch to HDMI 5.', detail: error && (error.message || error.name) || 'Select the PS5 in Samsung Home and return to CleanFrame.' });
+        }
         else finish(failure(error));
       }
       try {

@@ -5,9 +5,9 @@ import vm from 'node:vm';
 import test from 'node:test';
 
 const source = readFileSync(new URL('../app/device.js', import.meta.url), 'utf8');
-function harness({ supported = true, throwSource = false, metadata = [], noMetadata = false, metadataError = false, throwControl = false } = {}) {
+function harness({ supported = true, throwSource = false, metadata = [], noMetadata = false, metadataError = false, throwControl = false, arraySources = false } = {}) {
   let now = 0, next = 0;
-  const timers = new Map(), requests = [], launches = [], sourceRequests = [], changes = [], controls = [], metadataCalls = [];
+  const timers = new Map(), requests = [], launches = [], sourceRequests = [], arrayRequests = [], changes = [], controls = [], metadataCalls = [];
   let current = { type: 'HDMI', number: 2 };
   const application = {
     getCurrentApplication: () => ({ appInfo: { id: 'Owner12345.Home' } }),
@@ -26,9 +26,30 @@ function harness({ supported = true, throwSource = false, metadata = [], noMetad
     XMLHttpRequest:function(){requestsHTTP.push({});throw Error('Unexpected HTTP request');},
     localStorage:{getItem(){throw Error('Unexpected token read');},setItem(){throw Error('Unexpected token write');}}};
   if (supported) {
-    window.tizen.systeminfo = { getPropertyValue: (name, ok, fail) => { assert.equal(name, 'VIDEOSOURCE'); sourceRequests.push({ ok, fail }); } };
-    window.tizen.tvwindow = { getSource: (...args) => { assert.equal(args.length, 0); return current; },
-      setSource: (source, ok, fail) => { if (throwSource) throw Error('Synthetic SDK failure'); changes.push({ source, ok, fail }); } };
+    const genuineSources = new WeakSet();
+    window.tizen.systeminfo = { getPropertyValue: (name, ok, fail) => {
+      assert.equal(name, 'VIDEOSOURCE');
+      sourceRequests.push({ ok: video => {
+        for (const list of [video && video.connected, video && video.disconnected]) {
+          if (Array.isArray(list)) list.forEach(source => { if (source && typeof source === 'object') genuineSources.add(source); });
+        }
+        ok(video);
+      }, fail });
+    } };
+    if (arraySources) window.tizen.systeminfo.getPropertyValueArray = (name, ok, fail) => {
+      assert.equal(name, 'VIDEOSOURCE');
+      arrayRequests.push({ ok: videos => {
+        if (Array.isArray(videos)) for (const video of videos) for (const list of [video.connected, video.disconnected]) {
+          if (Array.isArray(list)) list.forEach(source => genuineSources.add(source));
+        }
+        ok(videos);
+      }, fail });
+    };
+    window.tizen.tvwindow = { getSource: (...args) => { assert.equal(args.length, 0); if (current) genuineSources.add(current); return current; },
+      setSource: (source, ok, fail) => {
+        if (!genuineSources.has(source)) throw TypeError('Cannot convert object to SystemInfoVideoSourceInfo');
+        if (throwSource) throw Error('Synthetic SDK failure'); changes.push({ source, ok, fail });
+      } };
   }
   vm.runInNewContext(source, {
     window, tizen: window.tizen,
@@ -39,7 +60,7 @@ function harness({ supported = true, throwSource = false, metadata = [], noMetad
     now += ms;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   }
-  return { device: window.FrameDevice, requests, launches, sourceRequests, changes, requestsHTTP, sockets, controls, metadataCalls, advance, setCurrent: value => { current = value; } };
+  return { device: window.FrameDevice, requests, launches, sourceRequests, arrayRequests, changes, requestsHTTP, sockets, controls, metadataCalls, advance, setCurrent: value => { current = value; } };
 }
 
 test('a 500-app catalogue can arrive after the old eight-second deadline', () => {
@@ -111,6 +132,7 @@ test('input absence, denial and timeout remain errors; empty discovery offers on
   absent.device.sources(e => { error = e; }); assert.ok(error);
   for (const mode of ['denied', 'empty', 'timeout']) {
     const h = harness(), results = [];
+    if (mode === 'empty') h.setCurrent(null);
     h.device.sources((error, inputs) => results.push({ error, inputs }));
     if (mode === 'denied') h.sourceRequests[0].fail({ name: 'SecurityError' });
     else if (mode === 'empty') h.sourceRequests[0].ok({ connected: [], disconnected: [] });
@@ -125,33 +147,101 @@ test('input absence, denial and timeout remain errors; empty discovery offers on
     h.sourceRequests[0].ok(video); assert.equal(results.length, 1);
   }
 });
-test('manual HDMI 5 switches without an enumerated record and waits for the viewer', () => {
+test('unreported HDMI 5 never sends a plain object to the native API', () => {
   const h = harness(), results = [];
+  h.device.launchApp('cleanframe.hdmi5', error => results.push(error));
+  h.sourceRequests[0].ok(video);
+  assert.equal(h.changes.length, 0);
+  assert.equal(h.launches.length, 0);
+  assert.equal(results.length, 1);
+  assert.match(results[0].message, /not reported/);
+  assert.match(results[0].detail, /Reported HDMI inputs: 1, 2, 3/);
+  assert.match(results[0].detail, /Current source: HDMI 2/);
+});
+test('array discovery selects genuine HDMI 5 from a second source provider', () => {
+  const h = harness({ arraySources: true }), native5 = { type: 'HDMI', number: 5 }, results = [];
+  h.device.launchApp('cleanframe.hdmi5', error => results.push(error));
+  assert.equal(h.sourceRequests.length, 0);
+  h.arrayRequests[0].ok([video, { connected: [native5], disconnected: [] }]);
+  assert.equal(h.changes[0].source, native5);
+  h.changes[0].ok(native5); h.launches[0].ok();
+  assert.deepEqual(results, [null]);
+});
+test('unsupported or empty array discovery falls back once without losing native identity', () => {
+  for (const mode of ['unsupported', 'empty']) {
+    const h = harness({ arraySources: true });
+    h.device.setSource(2, () => {});
+    if (mode === 'unsupported') h.arrayRequests[0].fail({ name: 'NotSupportedError' });
+    else h.arrayRequests[0].ok([]);
+    h.arrayRequests[0].fail({ name: 'NotSupportedError' });
+    assert.equal(h.sourceRequests.length, 1);
+    h.sourceRequests[0].ok(video);
+    assert.equal(h.changes[0].source, video.connected[0]);
+    assert.equal(h.changes.length, 1);
+  }
+});
+test('late array discovery cannot select an input after cancellation or timeout', () => {
+  for (const mode of ['cancel', 'timeout']) {
+    const h = harness({ arraySources: true });
+    h.device.setSource(5, () => {});
+    if (mode === 'cancel') h.device.cancelSource(); else h.advance(8000);
+    h.arrayRequests[0].ok([{ connected: [{ type: 'HDMI', number: 5 }], disconnected: [] }]);
+    assert.equal(h.changes.length, 0);
+    assert.equal(h.launches.length, 0);
+  }
+});
+test('unresponsive array discovery falls back without letting its late result select a source', () => {
+  const h = harness({ arraySources: true });
+  h.device.setSource(2, () => {});
+  h.advance(2000);
+  assert.equal(h.sourceRequests.length, 1);
+  h.arrayRequests[0].ok([{ connected: [{ type: 'HDMI', number: 5 }], disconnected: [] }]);
+  assert.equal(h.changes.length, 0);
+  h.sourceRequests[0].ok(video);
+  assert.equal(h.changes.length, 1);
+  assert.equal(h.changes[0].source, video.connected[0]);
+});
+test('current HDMI 5 omitted by enumeration retains its genuine source and waits for the viewer', () => {
+  const h = harness(), results = [];
+  const current = { type: 'HDMI', number: 5 };
+  h.setCurrent(current);
   h.device.launchApp('cleanframe.hdmi5', (error, input) => results.push({ error, input }));
   h.sourceRequests[0].ok(video);
   assert.equal(h.changes.length, 1);
   assert.equal(h.changes[0].source.type, 'HDMI');
   assert.equal(h.changes[0].source.number, 5);
+  assert.equal(h.changes[0].source, current);
   h.changes[0].ok({ type: 'HDMI', number: 5 });
   assert.equal(results.length, 0);
   assert.equal(h.launches[0].id, 'org.tizen.tv-viewer');
   h.launches[0].ok();
   assert.equal(results[0].error, null);
-  assert.equal(results[0].input.manual, true);
+  assert.equal(results[0].input.active, true);
+  assert.notEqual(results[0].input.manual, true);
+});
+test('a genuine HDMI 5 record can be reused after another input becomes current', () => {
+  const h = harness(), current = { type: 'HDMI', number: 5 };
+  h.setCurrent(current);
+  h.device.sources(() => {}); h.sourceRequests[0].ok(video);
+  h.setCurrent({ type: 'HDMI', number: 1 });
+  h.device.launchApp('cleanframe.hdmi5', () => {}); h.sourceRequests[1].ok(video);
+  assert.equal(h.changes[0].source, current);
 });
 test('enumerated HDMI 5 remains a real record and is not duplicated or marked manual', () => {
   const h = harness(); let inputs;
   const reported = { type: 'HDMI', number: 5, signal: 'extra vendor data' };
   h.device.sources((error, value) => { assert.equal(error, null); inputs = value; });
   h.sourceRequests[0].ok({ connected: [reported], disconnected: [reported] });
-  assert.equal(inputs.length, 1);
-  assert.equal(inputs[0].source, reported);
-  assert.equal(inputs[0].connected, true);
-  assert.notEqual(inputs[0].manual, true);
+  const port5 = inputs.filter(input => input.number === 5);
+  assert.equal(port5.length, 1);
+  assert.equal(port5[0].source, reported);
+  assert.equal(port5[0].connected, true);
+  assert.notEqual(port5[0].manual, true);
 });
-test('manual HDMI 5 rejection never launches the viewer or reports success', () => {
+test('genuine current HDMI 5 rejection never launches the viewer or reports success', () => {
   for (const mode of ['rejected', 'throw', 'different', 'cancel', 'timeout']) {
     const h = harness({ throwSource: mode === 'throw' }), results = [];
+    h.setCurrent({ type: 'HDMI', number: 5 });
     h.device.launchApp('cleanframe.hdmi5', error => results.push(error));
     h.sourceRequests[0].ok(video);
     if (mode === 'rejected') h.changes[0].fail({ name: 'NotSupportedError' });
@@ -161,7 +251,7 @@ test('manual HDMI 5 rejection never launches the viewer or reports success', () 
     assert.equal(results.length, 1);
     assert.ok(results[0]);
     assert.equal(h.launches.length, 0);
-    if (mode === 'rejected' || mode === 'throw') assert.match(results[0].message, /rejected HDMI 5/);
+    if (mode === 'rejected' || mode === 'throw') assert.match(results[0].message, /could not switch to HDMI 5/);
   }
 });
 test('input switching uses a discovered disconnected record and completes only after viewer launch', () => {

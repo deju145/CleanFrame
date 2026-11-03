@@ -68,14 +68,32 @@ Installed-app discovery allows up to 20 seconds for large TV catalogues; launch 
 
 Settings → Samsung → Inputs opens the HDMI chooser. The adapter reads the TV’s actual connected and disconnected source records, including sleeping devices that may be listed as disconnected. It does not guess a universal port count or add a fourth default Home control. Missing APIs, denied access and discovery failure produce an unavailable/error state rather than invented ports. The active source comes from the synchronous `tvwindow.getSource()` return value.
 
-This integration build also offers the explicitly requested HDMI 5 shortcut when
-successful discovery omits that port. The row says “Not reported by TV — try
-manually” and does not claim a connected device. A reported HDMI 5 record takes
-precedence and is never duplicated. The PS5 dock shortcut uses the same request
-path. Samsung must accept source 5 and its viewer must open before the request
-reports success; rejection remains an error and never substitutes another port.
-This is an owner-requested manual source attempt, not evidence that every TV
-has five HDMI inputs. Its physical switching result is still unverified.
+The chooser also includes the genuine current source from `tvwindow.getSource()`
+when enumeration omits it. Native source objects are opaque: the adapter passes
+the exact TV-returned reference, never a plain object or JSON copy. A genuine
+HDMI 5 record is retained in memory while this app runs, so another source can
+become current without losing the PS5 shortcut's native record. Enumeration
+takes precedence over the remembered record. No native objects are stored in
+preferences, and the cache does not survive a full app restart.
+
+Discovery prefers `getPropertyValueArray('VIDEOSOURCE')` so all returned source
+providers contribute their native records. Firmware without that method, or
+which rejects/returns an empty array or does not respond within two seconds,
+retains the single-property route. The
+fallback is read-only, runs at most once and keeps the existing timeout and
+selection cancellation guards. This does not assume how Frame Pro divides its
+inputs between source providers; the fifth port still requires a native record.
+
+An unknown HDMI 5 row remains visible with “Not reported by TV”.
+Selecting that row without a genuine source shows the reported source details;
+it never submits a fabricated source. Opening the PS5 through Samsung Home and
+returning can supply a native current-source record on supported firmware. The
+Inputs row and PS5 dock shortcut share this path. If the TV reports HDMI 5 as
+the current source on return, it can be used for subsequent switches. If the
+TV never supplies that native record, adding a row cannot establish support.
+Source acceptance and the expected physical picture still need a TV check.
+An unavailable fifth-input error includes the reported HDMI numbers, current
+source and provider count so the owner can report these without DevTools.
 
 Up/Down selects an input. OK requests that exact source; Back returns to Samsung Settings. Retry after a failed load rereads the available sources. A routing error remains an error, and a failed handoff leaves the launcher usable. Timed-out or cancelled requests cannot start a later routing or viewer action; a native request already sent to the TV may itself be uncancellable.
 
