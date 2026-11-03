@@ -30,7 +30,11 @@ Photographers retain their rights. Wallpapers, thumbnails, panel backgrounds and
 
 ## HbbTV launch handoff
 
-The installed-metadata lookup and shared-host handoff are adapted from [AeroTizen PR #1](https://github.com/helalaou/AeroTizen/pull/1), specifically commit `e65a5311b032b5af3a6bc0a6e89155770eb29552` (`launcher/js/apps.js` and `launcher/js/config.js`). Copyright (c) 2026 Hamza El Alaoui, MIT License. The full notice is bundled at `app/licenses/AeroTizen-LICENSE.txt`. AeroTizen’s watcher and native Home setup are not included.
+The installed-metadata lookup and shared-host handoff are adapted from [AeroTizen PR #1](https://github.com/helalaou/AeroTizen/pull/1), specifically commit `e65a5311b032b5af3a6bc0a6e89155770eb29552` (`launcher/js/apps.js` and `launcher/js/config.js`). Copyright (c) 2026 Hamza El Alaoui, MIT License. The full notice is bundled at `app/licenses/AeroTizen-LICENSE.txt`. AeroTizen’s watcher and native Home setup are not part of the packaged TV application.
+
+## Separate Home-only development helper
+
+The optional `scripts/home-button/HomeOnlyPolicy.cs` side-effect preservation approach is informed by AeroTizen's MIT-licensed `native/home-control/ControlPolicy.cs` at commit `79ba9198d63002fbfa5ad620a6abfedebd33cdc5`. Copyright (c) 2026 Hamza El Alaoui. Its full license is retained beside the helper. This separate experimental helper does not install AeroTizen's watcher or enable boot control; it requires owner-specific originals, recovery preparation and explicit native-write authorization.
 
 ## Development dependencies and exports
 
