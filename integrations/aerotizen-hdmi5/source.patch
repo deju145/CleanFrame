@@ -1,0 +1,879 @@
+diff --git a/docs/hdmi5-test-build.md b/docs/hdmi5-test-build.md
+new file mode 100644
+index 0000000..3210d81
+--- /dev/null
++++ b/docs/hdmi5-test-build.md
+@@ -0,0 +1,89 @@
++# Frame Pro HDMI 5 test build
++
++This build adds an opt-in PlayStation 5 / HDMI 5 tile for the owner's
++QE65LS03FWUXXU (Tizen 9). It keeps app ID `DclHome001.Home`, package
++`DclHome001`, and the existing service identity. It does not change native Home,
++startup, signing profiles, or certificates.
++
++## Evidence and implementation
++
++On this TV, `VIDEOSOURCE` exposes only one provider containing HDMI 1–4.
++When Samsung Home selects the panel's HDMI 5 socket, `tvwindow.getSource()`
++throws `UnknownError: Unknown source type`. However, authenticated local IP
++Control on HTTPS port 1516 reports `getTVStates.inputSource = HDMI5`, and the
++owner confirmed `inputSourceControl` with `inputSource: HDMI5` switches from
++Tanix / HDMI 4 to PS5.
++
++The background service owns HTTPS and reads/writes a package-private 0600 token
++file. Its certificate exception applies only to the configured local TV's
++self-signed IP Control endpoint. Tokens are not placed in the widget, browser,
++preferences, logs, or status responses. The service binds its control endpoint
++only to loopback. Token setup travels over the authenticated Developer Mode
++SDB connection and requires the native control header with no browser Origin.
++The UI receives only configuration status and current input. Only the fixed
++`getTVStates` and `inputSourceControl(HDMI5)` methods are available.
++
++The opt-in tile uses IP Control and then opens `org.tizen.tv-viewer`. It never
++passes a synthetic source to TVWindow. Existing native HDMI inputs remain on
++their existing path. The input state is refreshed when the launcher resumes;
++there is no new polling loop or automatic command retry.
++
++## Install the supplied compiled widget
++
++Extract `AeroTizen-HDMI5-test.zip` into Downloads. Stop `inspect launcher`
++with Ctrl+C first so its connection is released. In the folder containing your
++existing AeroTizen CLI, run:
++
++```sh
++./aerotizen --tv 192.168.1.50 install "$HOME/Downloads/AeroTizen-HDMI5-test/AeroTizen-HDMI5-unsigned.wgt"
++```
++
++This uses the CLI's existing certificate profile to update in place. Do not
++uninstall the existing app or regenerate certificates. If the CLI says no
++certificates exist, stop and inspect the profile location rather than creating
++a new app identity.
++
++Open AeroTizen on the TV and let its Home screen load. Then transfer the
++existing token (it remains on the Mac as well):
++
++```sh
++python3 "$HOME/Downloads/AeroTizen-HDMI5-test/tools/configure-hdmi5.py" --tv 192.168.1.50
++python3 "$HOME/Downloads/AeroTizen-HDMI5-test/tools/configure-hdmi5.py" --tv 192.168.1.50 --check
++```
++
++The default token file is
++`~/.config/cleanframe-hdmi-diagnostics/ip-control-token.json`, created by the
++owner's successful IP Control test. Do not paste its contents into chat.
++Return to AeroTizen Home to refresh Inputs; the PS5 tile should appear.
++Select it once from another input and confirm the PS5 picture appears.
++Use the physical Home button to return.
++
++If a different token path is needed, pass `--token-file /path/to/file.json`.
++If the TV's address changes, provision again using its new `--tv` address.
++There is no pairing or token renewal in the setup tool.
++
++To remove this opt-in without changing Home or other preferences:
++
++```sh
++python3 "$HOME/Downloads/AeroTizen-HDMI5-test/tools/configure-hdmi5.py" --tv 192.168.1.50 --disable
++```
++
++Return to AeroTizen Home to refresh Inputs. Your original token on the Mac
++is retained. A standard AeroTizen widget can later replace the test build
++through the same CLI install command, without uninstalling.
++
++## Validation and limits
++
++Build, type checks, formatting, lint, 306 Node tests, and the compiled-browser
++HDMI 5 test passed. The browser test covers a TV API that omits HDMI 5 and
++throws on active-source reads, tile visibility with disconnected inputs hidden,
++one POST per activation, native viewer handoff, and no synthetic TVWindow calls.
++Service tests cover private persistence, token redaction, origin restrictions,
++fixed commands, overlapping calls, failure without retries, and disable.
++
++The owner has validated Mac-to-TV IP Control switching. Background-service-to-TV
++HTTPS, the transferred token's acceptance from the TV itself, and native viewer
++handoff on this physical firmware still require the installation test.
++
++Upstream base: `94b4df2e27b158d1ac08cf2f5f9a73ddcc4e2646` (launcher 2.7.0).
++The archive includes the complete source diff, setup client, and upstream license.
+diff --git a/launcher/js/inputs.js b/launcher/js/inputs.js
+index 3398366..bc73506 100644
+--- a/launcher/js/inputs.js
++++ b/launcher/js/inputs.js
+@@ -6,6 +6,37 @@
+   var tz = A.tizen;
+   var inputs = (A.inputs = { sources: [], watching: false });
+   var listeners = [];
++  var hdmi5Status = null;
++  var loadNumber = 0;
++  var selectingHdmi5 = false;
++
++  function ipControl(path, method, done) {
++    var finished = false;
++    function finish(value) {
++      if (!finished) {
++        finished = true;
++        done(value);
++      }
++    }
++    try {
++      var request = new XMLHttpRequest();
++      request.open(method, A.config.SERVICE_URL + path, true);
++      request.timeout = 10000;
++      request.onerror = request.ontimeout = function () {
++        finish(null);
++      };
++      request.onload = function () {
++        try {
++          finish(request.status === 200 ? JSON.parse(request.responseText) : null);
++        } catch (e) {
++          finish(null);
++        }
++      };
++      request.send();
++    } catch (e) {
++      finish(null);
++    }
++  }
+ 
+   inputs.subscribe = function (listener) {
+     listeners.push(listener);
+@@ -18,6 +49,40 @@
+   };
+ 
+   function publish() {
++    inputs.sources = inputs.sources.filter(function (s) {
++      return !s.ipControl;
++    });
++    if (hdmi5Status && hdmi5Status.configured === true) {
++      var knownActive = typeof hdmi5Status.inputSource === "string" && /^HDMI\d+$/.test(hdmi5Status.inputSource);
++      inputs.sources = inputs.sources
++        .filter(function (s) {
++          return !(s.type === "HDMI" && Number(s.number) === 5);
++        })
++        .map(function (s) {
++          if (!knownActive || s.type !== "HDMI") {
++            return s;
++          }
++          var updated = {};
++          Object.keys(s).forEach(function (key) {
++            updated[key] = s[key];
++          });
++          updated.active = "HDMI" + s.number === hdmi5Status.inputSource;
++          return updated;
++        });
++      inputs.sources.push({
++        type: "HDMI",
++        number: 5,
++        editName: "PlayStation 5",
++        connected: hdmi5Status.inputSource === "HDMI5",
++        active: hdmi5Status.inputSource === "HDMI5",
++        ipControl: true,
++      });
++      inputs.sources.sort(function (a, b) {
++        return (
++          (a.type === "TV") - (b.type === "TV") || Number(b.connected) - Number(a.connected) || a.number - b.number
++        );
++      });
++    }
+     listeners.slice().forEach(function (listener) {
+       listener();
+     });
+@@ -76,6 +141,16 @@
+ 
+   // Connected ports first, then empty ones; Live TV last. Refreshes when something is plugged in.
+   inputs.load = function () {
++    var generation = ++loadNumber;
++    if (tz && A.config && A.config.SERVICE_URL) {
++      ipControl("/inputs/hdmi5", "GET", function (status) {
++        if (generation !== loadNumber) {
++          return;
++        }
++        hdmi5Status = status;
++        publish();
++      });
++    }
+     if (!tz || !tz.systeminfo) {
+       // desktop browser preview
+       inputs.sources = [
+@@ -90,6 +165,9 @@
+       tz.systeminfo.getPropertyValue(
+         "VIDEOSOURCE",
+         function (info) {
++          if (generation !== loadNumber) {
++            return;
++          }
+           // A selected HDMI may be reported disconnected while the TV is
+           // switching sources. Reading the selected source does not imply a cable.
+           var current = null;
+@@ -165,6 +243,30 @@
+   }
+ 
+   inputs.show = function (s) {
++    if (s && s.ipControl) {
++      if (selectingHdmi5) {
++        return;
++      }
++      selectingHdmi5 = true;
++      ipControl("/inputs/hdmi5/select", "POST", function (result) {
++        selectingHdmi5 = false;
++        if (!result || !result.ok) {
++          A.toast(A.translate("inputs.switchFailed"));
++          return;
++        }
++        if (A.homewatch) {
++          A.homewatch.watch("org.tizen.tv-viewer");
++        }
++        try {
++          tz.application.launch("org.tizen.tv-viewer", null, function () {
++            A.toast(A.translate("inputs.switchFailed"));
++          });
++        } catch (e) {
++          A.toast(A.translate("inputs.switchFailed"));
++        }
++      });
++      return;
++    }
+     // Native Live TV owns channel selection and remote control, unlike the
+     // upstream embedded TVWindow. If unsupported, preserve TVWindow fallback.
+     if (
+diff --git a/launcher/service/hdmi5.js b/launcher/service/hdmi5.js
+new file mode 100644
+index 0000000..42150a9
+--- /dev/null
++++ b/launcher/service/hdmi5.js
+@@ -0,0 +1,262 @@
++"use strict";
++
++// Some Frame Pro sets expose their panel's HDMI socket only through IP Control.
++// Keep this separate from TVWindow: a fabricated native source is not accepted.
++var https = require("https");
++var fs = require("fs");
++
++module.exports = function (tz) {
++  var path = null;
++  var config = null;
++  var busy = false;
++
++  function validate(value) {
++    if (
++      !value ||
++      value.schema !== 1 ||
++      typeof value.host !== "string" ||
++      !/^(10\.|192\.168\.|172\.(1[6-9]|2[0-9]|3[01])\.)/.test(value.host) ||
++      !/^\d{1,3}(\.\d{1,3}){3}$/.test(value.host) ||
++      value.host.split(".").some(function (n) {
++        return Number(n) > 255;
++      }) ||
++      typeof value.token !== "string" ||
++      !value.token.length ||
++      value.token.length > 2048
++    ) {
++      throw new Error("Invalid HDMI 5 configuration");
++    }
++    return { schema: 1, host: value.host, token: value.token };
++  }
++
++  if (tz && tz.filesystem && tz.filesystem.resolve) {
++    tz.filesystem.resolve(
++      "wgt-private",
++      function (directory) {
++        try {
++          var uri = directory.toURI();
++          if (uri.indexOf("file:///") !== 0) {
++            return;
++          }
++          path = decodeURIComponent(uri.slice(7)).replace(/\/$/, "") + "/aerotizen-hdmi5-v1.json";
++          if (fs.existsSync(path) && fs.statSync(path).size <= 4096) {
++            config = validate(JSON.parse(fs.readFileSync(path, "utf8")));
++          }
++        } catch (e) {
++          config = null;
++        }
++      },
++      function () {},
++      "rw",
++    );
++  }
++
++  function rpc(method, params, done) {
++    if (!config) {
++      done("NotConfigured");
++      return;
++    }
++    if (busy) {
++      done("Busy");
++      return;
++    }
++    busy = true;
++    var finished = false;
++    var request;
++    var timer;
++    function finish(error, value) {
++      if (finished) {
++        return;
++      }
++      finished = true;
++      busy = false;
++      clearTimeout(timer);
++      done(error, value);
++    }
++    var payload = JSON.stringify({
++      jsonrpc: "2.0",
++      id: 1,
++      method: method,
++      params: Object.assign({ AccessToken: config.token }, params || {}),
++    });
++    try {
++      request = https.request(
++        {
++          hostname: config.host,
++          port: 1516,
++          path: "/",
++          method: "POST",
++          // Samsung's local endpoint uses a self-signed certificate. This exception
++          // belongs only to this fixed IP Control request, never global TLS state.
++          rejectUnauthorized: false,
++          agent: false,
++          headers: {
++            Accept: "application/json",
++            "Content-Type": "application/json",
++            "Content-Length": Buffer.byteLength(payload),
++          },
++        },
++        function (response) {
++          var body = "";
++          response.setEncoding("utf8");
++          response.on("data", function (chunk) {
++            body += chunk;
++            if (body.length > 16384) {
++              finish("InvalidResponse");
++              request.destroy();
++            }
++          });
++          response.on("error", function () {
++            finish("ConnectionFailed");
++          });
++          response.on("end", function () {
++            if (finished) {
++              return;
++            }
++            try {
++              var reply = JSON.parse(body);
++              if (response.statusCode !== 200 || !reply.result || reply.error || reply.code) {
++                finish("CommandRejected");
++                return;
++              }
++              finish(null, reply.result);
++            } catch (e) {
++              finish("InvalidResponse");
++            }
++          });
++        },
++      );
++      request.on("error", function () {
++        finish("ConnectionFailed");
++      });
++      timer = setTimeout(function () {
++        finish("TimedOut");
++        request.destroy();
++      }, 8000);
++      request.end(payload);
++    } catch (e) {
++      finish("ConnectionFailed");
++    }
++  }
++
++  function reply(req, res, code, value) {
++    var headers = { "Content-Type": "application/json", "Cache-Control": "no-store" };
++    var origin = (req.headers || {}).origin;
++    if (origin === "null" || origin === "file://") {
++      headers["Access-Control-Allow-Origin"] = origin;
++      headers.Vary = "Origin";
++    }
++    res.writeHead(code, headers);
++    res.end(JSON.stringify(value));
++  }
++
++  function configure(req, res) {
++    var headers = req.headers || {};
++    if (req.method !== "POST" || headers.origin || headers["x-aerotizen-hdmi5"] !== "1") {
++      reply(req, res, 403, { error: "Developer connection required" });
++      return;
++    }
++    if (headers["content-type"] !== "application/json") {
++      reply(req, res, 415, { error: "JSON required" });
++      return;
++    }
++    if (!path || busy) {
++      reply(req, res, 503, { error: "NotReady" });
++      return;
++    }
++    var body = "";
++    var finished = false;
++    var timer = setTimeout(function () {
++      if (!finished) {
++        finished = true;
++        reply(req, res, 408, { error: "TimedOut" });
++      }
++    }, 5000);
++    req.setEncoding("utf8");
++    req.on("data", function (chunk) {
++      body += chunk;
++      if (!finished && body.length > 4096) {
++        finished = true;
++        clearTimeout(timer);
++        reply(req, res, 413, { error: "Request too large" });
++      }
++    });
++    req.on("error", function () {
++      if (!finished) {
++        finished = true;
++        clearTimeout(timer);
++        reply(req, res, 400, { error: "Request failed" });
++      }
++    });
++    req.on("end", function () {
++      if (finished) {
++        return;
++      }
++      finished = true;
++      clearTimeout(timer);
++      var temporary = path + ".tmp";
++      try {
++        var parsed = JSON.parse(body);
++        if (parsed && parsed.enabled === false) {
++          if (fs.existsSync(path)) {
++            fs.unlinkSync(path);
++          }
++          config = null;
++          reply(req, res, 200, { configured: false });
++          return;
++        }
++        var value = validate(parsed);
++        fs.writeFileSync(temporary, JSON.stringify(value), { mode: 384 });
++        fs.chmodSync(temporary, 384);
++        fs.renameSync(temporary, path);
++        config = value;
++        reply(req, res, 200, { configured: true });
++      } catch (e) {
++        try {
++          fs.unlinkSync(temporary);
++        } catch (ignored) {}
++        reply(req, res, 400, { error: "Configuration failed" });
++      }
++    });
++  }
++
++  return {
++    handle: function (req, res, pathname) {
++      if (pathname === "/control/hdmi5") {
++        configure(req, res);
++        return true;
++      }
++      if (pathname !== "/inputs/hdmi5" && pathname !== "/inputs/hdmi5/select") {
++        return false;
++      }
++      var origin = (req.headers || {}).origin;
++      if (origin && origin !== "null" && origin !== "file://") {
++        reply(req, res, 403, { error: "Local launcher required" });
++        return true;
++      }
++      var select = pathname === "/inputs/hdmi5/select";
++      if (req.method !== (select ? "POST" : "GET")) {
++        reply(req, res, 405, { error: "Method not allowed" });
++        return true;
++      }
++      if (!config) {
++        reply(req, res, select ? 409 : 200, { configured: false });
++        return true;
++      }
++      rpc(
++        select ? "inputSourceControl" : "getTVStates",
++        select ? { inputSource: "HDMI5" } : null,
++        function (error, value) {
++          // Never return tokens, TV response bodies, or configuration details.
++          reply(req, res, error ? 502 : 200, {
++            configured: true,
++            ok: !error,
++            error: error || null,
++            inputSource: value && typeof value.inputSource === "string" ? value.inputSource : null,
++          });
++        },
++      );
++      return true;
++    },
++  };
++};
+diff --git a/launcher/service/index.js b/launcher/service/index.js
+index 4ae8586..08e805b 100644
+--- a/launcher/service/index.js
++++ b/launcher/service/index.js
+@@ -51,6 +51,7 @@ var BOOT_FALLBACK = 15000; // launch anyway if the TV type is still unknown
+ var started = false;
+ var stopped = false;
+ var server = null;
++var hdmi5 = null;
+ var interval = null;
+ var capabilityRetry = null;
+ var busy = false;
+@@ -819,6 +820,11 @@ module.exports.onStart = function () {
+     return;
+   }
+   started = true;
++  try {
++    hdmi5 = require("./hdmi5")(typeof tizen !== "undefined" ? tizen : null);
++  } catch (e) {
++    /* HDMI 5 stays unavailable if private storage or HTTPS is unsupported. */
++  }
+   diagnostics.record("service.start");
+   setTimeout(function () {
+     diagnosticContext.start();
+@@ -835,6 +841,9 @@ module.exports.onStart = function () {
+   server = http.createServer(function (req, res) {
+     var url = require("url").parse(req.url, true),
+       query = url.query;
++    if (hdmi5 && hdmi5.handle(req, res, url.pathname)) {
++      return;
++    }
+     if (url.pathname === "/diagnostics/logs" || url.pathname === "/diagnostics/events") {
+       diagnosticRequest(req, res, url.pathname);
+       return;
+diff --git a/tests/browser/hdmi5.spec.cjs b/tests/browser/hdmi5.spec.cjs
+new file mode 100644
+index 0000000..72a8a79
+--- /dev/null
++++ b/tests/browser/hdmi5.spec.cjs
+@@ -0,0 +1,64 @@
++const { test, expect } = require("@playwright/test");
++
++test("HDMI 5 omitted by Tizen gets a PS5 tile, IP switching, and native viewer handoff", async ({ page }) => {
++  const selections = [];
++  await page.route("https://**/*", (route) => route.fulfill({ body: "{}" }));
++  await page.route("http://127.0.0.1:47790/**", (route) => {
++    const select = route.request().url().endsWith("/inputs/hdmi5/select");
++    if (select) selections.push(route.request().method());
++    return route.fulfill({
++      contentType: "application/json",
++      headers: { "Access-Control-Allow-Origin": "*" },
++      body: JSON.stringify({ configured: true, ok: true, inputSource: select ? "HDMI5" : "HDMI4" }),
++    });
++  });
++  await page.addInitScript(() => {
++    window.nativeSources = [];
++    window.viewerLaunches = [];
++    localStorage.setItem(
++      "aerotizen.settings.v1",
++      JSON.stringify({
++        home: ["test.app"],
++        showWeather: false,
++        hideDisconnectedHdmi: true,
++      }),
++    );
++    window.tizen = {
++      application: {
++        getAppsInfo: (done) => done([{ id: "test.app", name: "Test app", packageId: "1234567890" }]),
++        launchAppControl() {},
++        launch: (id) => window.viewerLaunches.push(id),
++      },
++      systeminfo: {
++        getPropertyValue(name, done, fail) {
++          if (name === "VIDEOSOURCE")
++            done({
++              connected: [{ type: "HDMI", number: 4, editName: "Tanix" }],
++              disconnected: [{ type: "HDMI", number: 1 }],
++            });
++          else fail?.();
++        },
++        addPropertyValueChangeListener() {
++          return 1;
++        },
++      },
++      tvwindow: {
++        getSource() {
++          throw new Error("Unknown source type");
++        },
++        setSource(source) {
++          window.nativeSources.push(source);
++        },
++      },
++    };
++  });
++  await page.goto("/");
++  const ps5 = page.getByRole("button", { name: "PlayStation 5", exact: true });
++  await expect(ps5).toBeVisible();
++  await ps5.click();
++  await expect.poll(() => page.evaluate(() => window.viewerLaunches)).toEqual(["org.tizen.tv-viewer"]);
++  expect(selections).toEqual(["POST"]);
++  expect(await page.evaluate(() => window.nativeSources)).toEqual([]);
++  await page.evaluate(() => window.AeroTizen.inputs.load());
++  await expect(ps5).toHaveCount(1);
++});
+diff --git a/tests/hdmi5_service.test.cjs b/tests/hdmi5_service.test.cjs
+new file mode 100644
+index 0000000..26b54f1
+--- /dev/null
++++ b/tests/hdmi5_service.test.cjs
+@@ -0,0 +1,173 @@
++const assert = require("node:assert/strict");
++const { EventEmitter } = require("node:events");
++const fs = require("node:fs");
++const os = require("node:os");
++const path = require("node:path");
++const { test } = require("node:test");
++const vm = require("node:vm");
++
++function fixture(t) {
++  const folder = fs.mkdtempSync(path.join(os.tmpdir(), "aerotizen-hdmi5-"));
++  t.after(() => fs.rmSync(folder, { recursive: true, force: true }));
++  const requests = [];
++  const module = { exports: {} };
++  vm.runInNewContext(fs.readFileSync("launcher/service/hdmi5.js", "utf8"), {
++    module,
++    Buffer,
++    setTimeout,
++    clearTimeout,
++    require(name) {
++      if (name === "fs") return fs;
++      assert.equal(name, "https");
++      return {
++        request(options, callback) {
++          const request = new EventEmitter();
++          request.destroy = () => {};
++          request.end = (data) =>
++            requests.push({
++              options,
++              data: JSON.parse(data),
++              respond(value, statusCode = 200) {
++                const response = new EventEmitter();
++                response.statusCode = statusCode;
++                response.setEncoding = () => {};
++                callback(response);
++                response.emit("data", JSON.stringify(value));
++                response.emit("end");
++              },
++              fail: () => request.emit("error", new Error("sensitive TV response")),
++            });
++          return request;
++        },
++      };
++    },
++  });
++  function create() {
++    return module.exports({
++      filesystem: {
++        resolve(name, done) {
++          assert.equal(name, "wgt-private");
++          done({ toURI: () => "file://" + folder });
++        },
++      },
++    });
++  }
++  return { create, folder, requests };
++}
++
++function call(service, pathname, method = "GET", body, headers = {}) {
++  let status;
++  let response;
++  const req = new EventEmitter();
++  req.method = method;
++  req.headers = headers;
++  req.setEncoding = () => {};
++  const handled = service.handle(
++    req,
++    {
++      writeHead(code) {
++        status = code;
++      },
++      end(value) {
++        response = JSON.parse(value);
++      },
++    },
++    pathname,
++  );
++  if (body !== undefined) req.emit("data", JSON.stringify(body));
++  req.emit("end");
++  return {
++    handled,
++    get status() {
++      return status;
++    },
++    get response() {
++      return response;
++    },
++  };
++}
++
++function configure(service) {
++  return call(
++    service,
++    "/control/hdmi5",
++    "POST",
++    {
++      schema: 1,
++      host: "192.168.1.50",
++      token: "private-test-token",
++    },
++    { "x-aerotizen-hdmi5": "1", "content-type": "application/json" },
++  );
++}
++
++test("configuration requires a developer header, persists privately, and never returns its token", (t) => {
++  const f = fixture(t);
++  const service = f.create();
++  assert.equal(call(service, "/control/hdmi5", "POST", {}).status, 403);
++  assert.equal(
++    call(
++      service,
++      "/control/hdmi5",
++      "POST",
++      {},
++      {
++        origin: "null",
++        "x-aerotizen-hdmi5": "1",
++      },
++    ).status,
++    403,
++  );
++  const result = configure(service);
++  assert.equal(result.status, 200);
++  assert.equal(JSON.stringify(result.response), '{"configured":true}');
++  const file = path.join(f.folder, "aerotizen-hdmi5-v1.json");
++  assert.equal(fs.statSync(file).mode & 0o777, 0o600);
++  const restarted = f.create();
++  const read = call(restarted, "/inputs/hdmi5");
++  assert.equal(f.requests.length, 1);
++  f.requests[0].respond({ result: { inputSource: "HDMI5", AccessToken: "must-not-leak" } });
++  assert.equal(read.response.inputSource, "HDMI5");
++  assert.equal(JSON.stringify(read.response).includes("must-not-leak"), false);
++});
++
++test("HDMI 5 selection uses only its fixed method, excludes foreign origins, and never retries", (t) => {
++  const f = fixture(t);
++  const service = f.create();
++  configure(service);
++  assert.equal(call(service, "/inputs/hdmi5/select", "GET").status, 405);
++  assert.equal(call(service, "/inputs/hdmi5/select", "POST", null, { origin: "https://example.com" }).status, 403);
++  const result = call(service, "/inputs/hdmi5/select", "POST");
++  assert.deepEqual(f.requests[0].data.params, { AccessToken: "private-test-token", inputSource: "HDMI5" });
++  assert.equal(f.requests[0].data.method, "inputSourceControl");
++  assert.equal(f.requests[0].options.port, 1516);
++  assert.equal(call(service, "/inputs/hdmi5").response.error, "Busy");
++  f.requests[0].fail();
++  assert.equal(result.response.ok, false);
++  assert.equal(JSON.stringify(result.response).includes("sensitive"), false);
++  assert.equal(f.requests.length, 1);
++  const retryByUser = call(service, "/inputs/hdmi5/select", "POST");
++  f.requests[1].respond({ error: { code: -32601, message: "Method not found" } });
++  assert.equal(retryByUser.response.error, "CommandRejected");
++});
++
++test("disabling removes only HDMI 5 storage and unconfigured selection cannot send a command", (t) => {
++  const f = fixture(t);
++  const service = f.create();
++  assert.equal(call(service, "/inputs/hdmi5/select", "POST").status, 409);
++  configure(service);
++  const result = call(
++    service,
++    "/control/hdmi5",
++    "POST",
++    { enabled: false },
++    {
++      "x-aerotizen-hdmi5": "1",
++      "content-type": "application/json",
++    },
++  );
++  assert.equal(result.response.configured, false);
++  assert.equal(fs.existsSync(path.join(f.folder, "aerotizen-hdmi5-v1.json")), false);
++  assert.equal(call(service, "/inputs/hdmi5").response.configured, false);
++  assert.equal(f.requests.length, 0);
++});
+diff --git a/tools/configure-hdmi5.py b/tools/configure-hdmi5.py
+new file mode 100644
+index 0000000..1a02fc9
+--- /dev/null
++++ b/tools/configure-hdmi5.py
+@@ -0,0 +1,86 @@
++"""Transfer the owner's IP Control token over SDB to AeroTizen's private store.
++
++Uses only the Python standard library and the bundled AeroTizen SDB client.
++No pairing, application installation, Home settings, or certificate changes.
++"""
++
++import argparse
++import http.client
++import io
++import ipaddress
++import json
++from pathlib import Path
++import sys
++
++sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "cli/src"))
++from aerotizen.sdb import Sdb, SdbError  # noqa: E402
++
++
++class ResponseSocket:
++    def __init__(self, data):
++        self.data = data
++
++    def makefile(self, *args):
++        return io.BytesIO(self.data)
++
++
++def main():
++    parser = argparse.ArgumentParser(description=__doc__)
++    parser.add_argument("--tv", required=True, type=ipaddress.IPv4Address)
++    parser.add_argument(
++        "--token-file", type=Path,
++        default=Path.home() / ".config/cleanframe-hdmi-diagnostics/ip-control-token.json",
++    )
++    parser.add_argument("--check", action="store_true", help="read status without transferring a token")
++    parser.add_argument("--disable", action="store_true", help="remove only the TV's HDMI 5 configuration")
++    args = parser.parse_args()
++    if args.check and args.disable:
++        parser.error("Choose --check or --disable")
++    host = str(args.tv)
++    if args.check:
++        method, path, body = "GET", "/inputs/hdmi5", b""
++    elif args.disable:
++        method, path, body = "POST", "/control/hdmi5", b'{"enabled":false}'
++    else:
++        token = json.loads(args.token_file.read_text())["AccessToken"]
++        if not isinstance(token, str) or not 1 <= len(token) <= 2048:
++            raise ValueError("Invalid token file")
++        method, path = "POST", "/control/hdmi5"
++        body = json.dumps({"schema": 1, "host": host, "token": token}).encode()
++    packet = (
++        f"{method} {path} HTTP/1.1\r\n"
++        "Host: 127.0.0.1:47790\r\n"
++        "Connection: close\r\n"
++        "Content-Type: application/json\r\n"
++        "X-AeroTizen-HDMI5: 1\r\n"
++        f"Content-Length: {len(body)}\r\n\r\n"
++    ).encode() + body
++    with Sdb(host, timeout=15).connect() as connection:
++        data = connection.tcp_request(47790, packet, timeout=12, max_output=32768)
++    response = http.client.HTTPResponse(ResponseSocket(data))
++    response.begin()
++    result = json.loads(response.read())
++    if (
++        response.status != 200
++        or not isinstance(result, dict)
++        or type(result.get("configured")) is not bool
++        or (not args.check and result["configured"] == args.disable)
++    ):
++        raise ValueError("HDMI 5 setup failed; open the updated AeroTizen app and check the service")
++    # Only emit explicitly public fields; never print token-bearing response bodies.
++    print("HDMI 5 configured:", result.get("configured") is True)
++    if args.check:
++        print("Input:", result.get("inputSource") or "unknown")
++        print("Read successful:", result.get("ok") is True)
++    else:
++        print("Return to AeroTizen Home to refresh Inputs. Home and signing settings unchanged.")
++
++
++if __name__ == "__main__":
++    try:
++        main()
++    except (OSError, ValueError, KeyError, SdbError, http.client.HTTPException):
++        raise SystemExit(
++            "HDMI 5 setup did not complete. Check SDB, the local token file, and that the "
++            "updated AeroTizen service is running. No automatic retry was performed."
++        ) from None
