@@ -4,7 +4,7 @@ The app includes all runtime JPEGs, thumbnails, registered material fields, publ
 
 ## Current List and Dock materials
 
-The 0.6 runtime uses fifteen photographs. Each has a background, a thumbnail, a small panel backdrop and four full-stage material JPEGs. The runtime never generates blur or reads photo pixels. Generate selected materials with:
+The 0.6 runtime uses twenty backgrounds. Each has a background, a thumbnail, a small panel backdrop and four full-stage material JPEGs. The runtime never generates blur or reads photo pixels. Generate selected materials with:
 
 ```sh
 node scripts/build-materials.mjs summit,goldcoast,sydney,amber,mint,alpine
@@ -33,8 +33,21 @@ Full-size original photographs are local inputs and are not required for glass r
 python3 scripts/prepare-wallpapers.py /path/to/originals --ids summit,goldcoast,sydney,amber,mint,alpine
 ```
 
-The retained generator covers all fifteen filenames and writes `.local/materials/wallpapers/`. The original nine keep their macOS `sips` recipe. The new six require Pillow and use the reviewed centred crop and JPEG settings; Pillow is a development dependency only. Supply Golden Hour as `big-sur-golden-hour.jpg` in the originals folder. Install Pillow in a local Python environment when using the six newer photos.
+The retained generator covers all twenty filenames and writes `.local/materials/wallpapers/`. The original nine keep their macOS `sips` recipe. The non-legacy images require Pillow and use the reviewed centred crop and JPEG settings; Pillow is a development dependency only. Supply Golden Hour as `big-sur-golden-hour.jpg` in the originals folder. Install Pillow in a local Python environment when using the six newer photos.
 
 For another photo, add its source/credit to `SOURCES.json`, prepare its background and thumbnail, add the gallery entry in `catalog.js`, generate the four registered materials and panel backdrop, then measure and review its foreground metadata. Keep the crop identical across all assets. Run source and browser checks before packaging.
 
 Source pages and licence observations are recorded in [asset sources](asset-sources.md).
+
+## Supplied artwork and seasonal backgrounds
+
+Five additional owner-supplied images are appended after the existing fifteen: `cliffs`, `greatwave`, `autumnmaple`, `wintervillage`, `snowyforest`. The originals are 3840 × 2160. Backgrounds use the same centred 1920 × 1080 JPEG recipe and 512 × 288 thumbnails; existing IDs and preferences are retained. Regenerate from the extracted original filenames with:
+
+```sh
+python3 scripts/prepare-wallpapers.py /path/to/extracted/Archive --ids cliffs,greatwave,autumnmaple,wintervillage,snowyforest
+node scripts/build-materials.mjs cliffs,greatwave,autumnmaple,wintervillage,snowyforest
+```
+
+`SOURCES.json` records each supplied filename and original SHA256. These files arrived without creator or redistribution licence information. Their inclusion in the owner's build does not assign them CleanFrame's MIT licence or the other backgrounds' Unsplash terms.
+
+The Great Wave uses the additional 0.50 Frost veil; Snowy forest uses the fourth List-column shade (0.48). These static catalogue settings keep bright areas behind app labels readable without changing other backgrounds.

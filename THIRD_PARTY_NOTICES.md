@@ -41,3 +41,7 @@ The optional `scripts/home-button/HomeOnlyPolicy.cs` side-effect preservation ap
 Development dependencies retain the licences in their npm packages. They are not copied into the TV JavaScript runtime.
 
 `npm run export:public` excludes private fonts and includes this notice and the root MIT licence. Preserve the included font and icon licence texts. Review [public release preparation](docs/public-release.md) before publishing a repository or download.
+
+## Owner-supplied artwork and seasonal images
+
+The five backgrounds identified as supplied in `app/assets/wallpapers/SOURCES.json` came from the owner's `Archive.zip`. Creator and redistribution terms were not supplied. CleanFrame's MIT licence and the existing Unsplash photo terms do not grant rights to these files.

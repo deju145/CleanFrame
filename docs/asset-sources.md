@@ -27,3 +27,7 @@ The background preparation and material rendering steps are described in [asset 
 Public fonts are Manrope, Geist and Newsreader under SIL OFL 1.1. Their licence texts are beside the assets; Geist and Newsreader source URLs and hashes are in `app/assets/fonts/SOURCES.json`.
 
 Icon sources, exact revisions and adaptation notes are in `app/assets/icons/SOURCES.json` and `ADDITIONAL-SOURCES.json`. ABC and SBS use the MIT Custom Brand Icons source at revision `a53cabf49bf439023a8f33585af30d783bffe51b`; ABC is recoloured from `abc-australia.svg`, and SBS is the extracted feather contour from `sbs-chill.svg`. The Disney+ icon also uses that project under MIT. Other service icons use Simple Icons under CC0. Utility outlines are original CleanFrame drawings. See [third-party notices](../THIRD_PARTY_NOTICES.md) for the retained licence texts and trademark scope.
+
+## Owner-supplied backgrounds
+
+Coastal cliffs, The Great Wave, Autumn maple, Winter village and Snowy forest were supplied in `Archive.zip`. Descriptive gallery names are not verified catalogue titles or creator credits. The original filenames and hashes are recorded in `app/assets/wallpapers/SOURCES.json`. No source page or redistribution licence was provided; these additions have no inferred Unsplash or MIT licence.

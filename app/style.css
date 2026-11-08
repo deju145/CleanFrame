@@ -87,6 +87,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .fv-3{--fv:.30}
 .fv-4{--fv:.36}
 .fv-5{--fv:.44}
+.fv-6{--fv:.50}
 .m-tint .mat-veil{background:rgba(8,14,18,.3)}
 .tone-light.m-tint .mat-veil{background:rgba(8,14,18,.38)}
 /* One edge: a top hairline that follows the radius. No lower highlight, no outer shadow. */
@@ -163,6 +164,7 @@ html,body{width:100%;height:100%;overflow:hidden;background:#000}
 .tone-light .ph-col{background:linear-gradient(to right,rgba(10,8,6,.28) 0,rgba(10,8,6,.28) 600px,rgba(10,8,6,0) 1040px)}
 .bg-photo.lc-2 .ph-col{background:linear-gradient(to right,rgba(10,8,6,.28) 0,rgba(10,8,6,.28) 600px,rgba(10,8,6,0) 1040px)}
 .bg-photo.lc-3 .ph-col{background:linear-gradient(to right,rgba(10,8,6,.32) 0,rgba(10,8,6,.32) 600px,rgba(10,8,6,0) 1040px)}
+.bg-photo.lc-4 .ph-col{background:linear-gradient(to right,rgba(10,8,6,.48) 0,rgba(10,8,6,.48) 600px,rgba(10,8,6,0) 1040px)}
 .ph-scene{position:absolute;left:0;top:0;width:1920px;height:1080px;pointer-events:none}
 .l-list .ph-scene{display:block}
 .ph-list{position:absolute;z-index:2;left:112px;top:72px;width:1200px;height:944px;overflow:hidden;pointer-events:auto;-webkit-mask-image:linear-gradient(to bottom,rgba(0,0,0,0.0000) 0px,rgba(0,0,0,0.0156) 20.5px,rgba(0,0,0,0.0625) 41px,rgba(0,0,0,0.1406) 61.5px,rgba(0,0,0,0.2500) 82px,rgba(0,0,0,0.3906) 102.5px,rgba(0,0,0,0.5625) 123px,rgba(0,0,0,0.7656) 143.5px,rgba(0,0,0,1.0000) 164px,#000 788px,rgba(0,0,0,0.7656) 807.5px,rgba(0,0,0,0.5625) 827px,rgba(0,0,0,0.3906) 846.5px,rgba(0,0,0,0.2500) 866px,rgba(0,0,0,0.1406) 885.5px,rgba(0,0,0,0.0625) 905px,rgba(0,0,0,0.0156) 924.5px,rgba(0,0,0,0.0000) 944px);mask-image:linear-gradient(to bottom,rgba(0,0,0,0.0000) 0px,rgba(0,0,0,0.0156) 20.5px,rgba(0,0,0,0.0625) 41px,rgba(0,0,0,0.1406) 61.5px,rgba(0,0,0,0.2500) 82px,rgba(0,0,0,0.3906) 102.5px,rgba(0,0,0,0.5625) 123px,rgba(0,0,0,0.7656) 143.5px,rgba(0,0,0,1.0000) 164px,#000 788px,rgba(0,0,0,0.7656) 807.5px,rgba(0,0,0,0.5625) 827px,rgba(0,0,0,0.3906) 846.5px,rgba(0,0,0,0.2500) 866px,rgba(0,0,0,0.1406) 885.5px,rgba(0,0,0,0.0625) 905px,rgba(0,0,0,0.0156) 924.5px,rgba(0,0,0,0.0000) 944px)}

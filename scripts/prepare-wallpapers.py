@@ -1,6 +1,6 @@
 """Prepare supplied originals in ignored staging; never replace app assets automatically.
 
-The original nine photos retain their macOS sips recipe. The six newer photos
+The original nine photos retain their macOS sips recipe. The non-legacy backgrounds
 use Pillow (development dependency only); see docs/assets.md.
 """
 import argparse
@@ -31,6 +31,20 @@ PHOTOS = [
     ('alpine', 'Alpine glow', 'cristina-gottardi-CSpjU6hYo_0-unsplash.jpg', 'Cristina Gottardi', 'CSpjU6hYo_0', 'light'),
 ]
 COVER_IDS = {'summit', 'goldcoast', 'sydney', 'amber', 'mint', 'alpine'}
+
+
+# Supplied originals: descriptive labels, without inferred creator/licence claims.
+SUPPLIED_PHOTOS = [
+    ('cliffs', 'Coastal cliffs', '1521110438ecedaa66045e79a6d22486'),
+    ('greatwave', 'The Great Wave', 'b7954430d727cd2489f12f440fc915ff'),
+    ('autumnmaple', 'Autumn maple', 'd6cadcf117beb25fd3dd92f064048081'),
+    ('wintervillage', 'Winter village', 'd791e731b40cf338e696665acb51406a'),
+    ('snowyforest', 'Snowy forest', 'fac5463d0973637087cd7bf6a7252abd'),
+]
+PHOTOS.extend((id, name, "full_landscape_" + digest + ".jpg",
+               "User-supplied; creator not verified", "Archive.zip", "light")
+              for id, name, digest in SUPPLIED_PHOTOS)
+COVER_IDS.update(id for id, _, _ in SUPPLIED_PHOTOS)
 
 
 def file_hash(path):
@@ -66,8 +80,8 @@ def prepare_cover(path, id, Image, ImageOps):
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('source', type=Path,
-                        help='Folder containing the selected original Unsplash filenames')
-    parser.add_argument('--ids', help='Comma-separated wallpaper IDs; default: all 15')
+                        help='Folder containing the selected selected original filenames')
+    parser.add_argument('--ids', help='Comma-separated wallpaper IDs; default: all catalogue originals')
     args = parser.parse_args()
     requested = None if args.ids is None else {id.strip() for id in args.ids.split(',')}
     known = {photo[0] for photo in PHOTOS}
@@ -86,7 +100,7 @@ def main():
         try:
             from PIL import Image, ImageOps
         except ImportError:
-            parser.error('The six newer photos require Pillow. See docs/assets.md.')
+            parser.error('These backgrounds require Pillow. See docs/assets.md.')
 
     OUTPUT.mkdir(parents=True, exist_ok=True)
     items = []
@@ -103,7 +117,7 @@ def main():
         items.append(dict(
             id=id, name=name, src='assets/wallpapers/' + background.name,
             thumb='assets/wallpapers/' + thumbnail.name, pos='50% 50%',
-            tone=tone, credit=credit, source='https://unsplash.com/photos/' + source,
+            tone=tone, credit=credit, source=source if source == 'Archive.zip' else 'https://unsplash.com/photos/' + source,
             originalBytes=path.stat().st_size, backgroundBytes=background.stat().st_size,
             thumbnailBytes=thumbnail.stat().st_size, originalSha256=original_hash,
             backgroundSha256=file_hash(background), thumbnailSha256=file_hash(thumbnail),

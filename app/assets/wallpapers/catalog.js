@@ -226,5 +226,80 @@ window.CleanFrameWallpapers = [
     "listColumn": 0,
     "dockQuiet": false,
     "clockMist": false
+  },
+  {
+    "id": "cliffs",
+    "name": "Coastal cliffs",
+    "src": "assets/wallpapers/cliffs.jpg",
+    "thumb": "assets/wallpapers/cliffs-thumb.jpg",
+    "tone": "light",
+    "ut": {
+      "tr": "mist",
+      "br": "mist"
+    },
+    "frostVeil": 0.44,
+    "listColumn": 3,
+    "dockQuiet": true,
+    "clockMist": true
+  },
+  {
+    "id": "greatwave",
+    "name": "The Great Wave",
+    "src": "assets/wallpapers/greatwave.jpg",
+    "thumb": "assets/wallpapers/greatwave-thumb.jpg",
+    "tone": "light",
+    "ut": {
+      "tr": "mist",
+      "br": "mist"
+    },
+    "frostVeil": 0.5,
+    "listColumn": 3,
+    "dockQuiet": true,
+    "clockMist": true
+  },
+  {
+    "id": "autumnmaple",
+    "name": "Autumn maple",
+    "src": "assets/wallpapers/autumnmaple.jpg",
+    "thumb": "assets/wallpapers/autumnmaple-thumb.jpg",
+    "tone": "light",
+    "ut": {
+      "tr": "mist",
+      "br": "mist"
+    },
+    "frostVeil": 0.44,
+    "listColumn": 3,
+    "dockQuiet": true,
+    "clockMist": true
+  },
+  {
+    "id": "wintervillage",
+    "name": "Winter village",
+    "src": "assets/wallpapers/wintervillage.jpg",
+    "thumb": "assets/wallpapers/wintervillage-thumb.jpg",
+    "tone": "light",
+    "ut": {
+      "tr": "mist",
+      "br": "mist"
+    },
+    "frostVeil": 0.44,
+    "listColumn": 3,
+    "dockQuiet": true,
+    "clockMist": true
+  },
+  {
+    "id": "snowyforest",
+    "name": "Snowy forest",
+    "src": "assets/wallpapers/snowyforest.jpg",
+    "thumb": "assets/wallpapers/snowyforest-thumb.jpg",
+    "tone": "light",
+    "ut": {
+      "tr": "mist",
+      "br": "mist"
+    },
+    "frostVeil": 0.44,
+    "listColumn": 4,
+    "dockQuiet": true,
+    "clockMist": true
   }
 ];
