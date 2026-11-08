@@ -1,6 +1,7 @@
 """Offline regression checks. All credentials and SDK responses are synthetic."""
 import contextlib
 import io
+import importlib.util
 import json
 import os
 from pathlib import Path
@@ -15,6 +16,10 @@ from font_assets import write_widget_archive
 from local_config import ROOT, load_settings, manifest_identity, override_identity, read_password
 import package
 from private_files import check_signed_widget, check_widget, generated_path, private_path, secret_content
+
+_ip_spec = importlib.util.spec_from_file_location('cleanframe_ip_control', ROOT / 'scripts/ip-control.py')
+ip_control = importlib.util.module_from_spec(_ip_spec)
+_ip_spec.loader.exec_module(ip_control)
 
 
 class ToolTests(unittest.TestCase):
@@ -48,13 +53,15 @@ class ToolTests(unittest.TestCase):
         with zipfile.ZipFile(output) as archive:
             config = archive.read('config.xml')
             self.assertEqual(manifest_identity(config), identity)
-            self.assertNotIn(b'<access ', config)
-            self.assertNotIn(b'privilege/internet', config)
+            self.assertIn(b'origin="http://127.0.0.1:47791"', config)
+            self.assertNotIn(b'origin="*"', config)
+            self.assertIn(b'AbCdEf1234.IpControl', config)
             self.assertNotIn(b'privilege/system', config)
             self.assertEqual(archive.read('device.js'), source)
             self.assertIn(b'org.tizen.hbbtv', source)
             self.assertNotIn(b'WebSocket', source)
-            self.assertNotIn(b'XMLHttpRequest', source)
+            hbbtv = source[source.index(b'function hbbtvLink'):source.index(b'function launch(brand')]
+            self.assertNotIn(b'XMLHttpRequest', hbbtv)
             self.assertFalse(any('.local' in name or 'samsung-api.json' in name for name in archive.namelist()))
 
     def test_existing_identity_and_sdk_defaults(self):
@@ -63,6 +70,57 @@ class ToolTests(unittest.TestCase):
         self.assertEqual(settings['sdk_path'], self.root / '.local/tizen-sdk')
         self.assertEqual(settings['identity']['app_id'], 'nClrkHome1.FrameHome')
         self.assertIsNone(settings['password_file'])
+
+    def test_ip_control_token_is_private_and_never_embedded_by_packaging(self):
+        token = self.password('.local/ip-control-token.json', b'{"AccessToken":"synthetic-ip-token"}')
+        self.assertEqual(ip_control.read_token(token), 'synthetic-ip-token')
+        token.chmod(0o644)
+        with self.assertRaises(ValueError):
+            ip_control.read_token(token)
+        token.chmod(0o600)
+        link = self.root / '.local/ip-token-link.json'
+        link.symlink_to(token)
+        with self.assertRaises(OSError):
+            ip_control.read_token(link)
+        widget = self.root / 'ip.wgt'
+        write_widget_archive(widget, root=self.root, include_private=False)
+        with zipfile.ZipFile(widget) as archive:
+            self.assertFalse(any(b'synthetic-ip-token' in archive.read(name) for name in archive.namelist()))
+
+    def test_service_identity_and_autostart_guards(self):
+        source = (self.root / 'app/config.xml').read_bytes()
+        for invalid in [source.replace(b'nClrkHome1.IpControl', b'AbCdEf1234.IpControl'),
+                        source.replace(b'on-boot="false"', b'on-boot="true"'),
+                        source.replace(b'auto-restart="false"', b'auto-restart="true"')]:
+            with self.assertRaises(ValueError):
+                manifest_identity(invalid)
+
+    def test_paired_install_preserves_signed_bytes_and_rejects_identity_before_upload(self):
+        widget = self.root / 'signed.wgt'
+        identity = {'package_id': 'AbCdEf1234', 'app_id': 'AbCdEf1234.MyHome'}
+        write_widget_archive(widget, root=self.root, include_private=False, identity=identity)
+        with zipfile.ZipFile(widget, 'a') as archive:
+            archive.writestr('author-signature.xml', '<Signature/>')
+            archive.writestr('signature1.xml', '<Signature/>')
+            archive.writestr('service/index.js', '// Synthetic service entry')
+            archive.writestr('service/hdmi5.js', '// Synthetic service implementation')
+        calls = []
+        class Session:
+            def push(self, data, path):
+                calls.append((data, path))
+            def shell_bounded(self, command, **kwargs):
+                calls.append(command)
+                return 'install completed'
+            def applist(self):
+                return 'app_id =AbCdEf1234.MyHome'
+        with contextlib.redirect_stdout(io.StringIO()):
+            ip_control.install(Session(), widget, identity)
+        self.assertEqual(calls[0][0], widget.read_bytes())
+        self.assertIn('0 vd_appinstall AbCdEf1234.MyHome ', calls[1])
+        before = len(calls)
+        with self.assertRaises(ValueError):
+            ip_control.install(Session(), widget, {'package_id': 'Other12345', 'app_id': 'Other12345.Home'})
+        self.assertEqual(len(calls), before)
         password = self.password('.local/certificates/private/certificate-password.txt')
         self.assertEqual(load_settings(self.root)['password_file'], password)
         self.assertIsNone(self.config(profile='Other profile')['password_file'])
@@ -271,8 +329,8 @@ with zipfile.ZipFile(target, 'a') as archive:
             self.assertNotIn('synthetic secret', output.getvalue())
             target = self.root / 'dist/CleanFrame.wgt'
             with zipfile.ZipFile(target) as archive:
-                self.assertNotIn(b'<access ', archive.read('config.xml'))
-                self.assertNotIn(b'privilege/internet', archive.read('config.xml'))
+                self.assertIn(b'origin="http://127.0.0.1:47791"', archive.read('config.xml'))
+                self.assertIn(b'AbCdEf1234.IpControl', archive.read('config.xml'))
                 self.assertIn(b'org.tizen.hbbtv', archive.read('device.js'))
             baseline = target.read_bytes()
             (cli.parent / 'mismatch').write_text('Synthetic identity mismatch')

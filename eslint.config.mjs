@@ -28,4 +28,7 @@ export default [{
     'valid-typeof': 'error',
     eqeqeq: ['error', 'always']
   }
+}, {
+  files: ['app/service/**/*.js'],
+  languageOptions: {globals: {require: 'readonly', module: 'readonly', Buffer: 'readonly'}}
 }];

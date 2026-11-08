@@ -2,6 +2,11 @@
 <widget xmlns="http://www.w3.org/ns/widgets" xmlns:tizen="http://tizen.org/ns/widgets" id="https://local.frame-home/app" version="0.7.0" viewmodes="maximized">
   <!-- Installation floor; device-specific evidence is recorded in docs/compatibility.md. -->
   <tizen:application id="nClrkHome1.FrameHome" package="nClrkHome1" required_version="5.0"/>
+  <tizen:service id="nClrkHome1.IpControl" on-boot="false" auto-restart="false">
+    <tizen:content src="service/index.js"/>
+    <tizen:name>CleanFrame IP Control</tizen:name>
+    <tizen:description>Local HDMI 5 selection</tizen:description>
+  </tizen:service>
   <content src="index.html"/>
   <name>CleanFrame</name>
   <icon src="icon.png"/>
@@ -11,5 +16,9 @@
   <tizen:privilege name="http://tizen.org/privilege/application.info"/>
   <tizen:privilege name="http://tizen.org/privilege/tv.inputdevice"/>
   <tizen:privilege name="http://tizen.org/privilege/tv.window"/>
+  <tizen:privilege name="http://tizen.org/privilege/internet"/>
+  <tizen:privilege name="http://tizen.org/privilege/filesystem.read"/>
+  <tizen:privilege name="http://tizen.org/privilege/filesystem.write"/>
+  <access origin="http://127.0.0.1:47791" subdomains="false"/>
   <tizen:setting screen-orientation="landscape" context-menu="disable" background-support="disable" encryption="disable" install-location="auto" hwkey-event="enable"/>
 </widget>

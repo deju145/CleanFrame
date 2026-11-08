@@ -26,3 +26,7 @@ The old `.local/samsung-api.json` file may remain but is ignored by packaging, e
 Offline tests check the exact HbbTV target, operation and all three payload fields, installed-metadata URL selection, generic wrappers, ordinary-app fallback, rejection and synchronous errors, no second attempt, late callbacks, and no networking. Packaging checks preserve identity and ignore old network settings. Browser tests mock the public Tizen boundary; they do not launch real TV apps.
 
 Pull this branch and run `npm run check`, then `npm run package`. Reactivate SDB using kill-server/connect/devices, install, and launch only after installation succeeds. Select BBC iPlayer without opening Vetro or approving a remote-control connection. Confirm visible startup, normal Back behaviour, and later cold-start operation with the Mac off. Native Home/startup changes and AeroTizen’s watcher are outside this revision.
+
+## Later HDMI 5 addition
+
+The no-network widget description above records the earlier HbbTV-only build. The optional [HDMI 5 IP Control](HDMI5-IP-CONTROL.md) addition supplies a separate on-demand service, loopback browser access and internet/filesystem privileges for the unreported fifth socket. HbbTV itself still uses public app controls, without a network launch or pairing.

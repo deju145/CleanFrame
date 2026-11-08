@@ -5,16 +5,18 @@ import vm from 'node:vm';
 import test from 'node:test';
 
 const source = readFileSync(new URL('../app/device.js', import.meta.url), 'utf8');
-function harness({ supported = true, throwSource = false, metadata = [], noMetadata = false, metadataError = false, throwControl = false, arraySources = false } = {}) {
+function harness({ supported = true, throwSource = false, metadata = [], noMetadata = false, metadataError = false, throwControl = false, arraySources = false, ipControl = false } = {}) {
   let now = 0, next = 0;
-  const timers = new Map(), requests = [], launches = [], sourceRequests = [], arrayRequests = [], changes = [], controls = [], metadataCalls = [];
+  const timers = new Map(), requests = [], launches = [], sourceRequests = [], arrayRequests = [], changes = [], controls = [], metadataCalls = [], ipRequests = [];
   let current = { type: 'HDMI', number: 2 };
   const application = {
     getCurrentApplication: () => ({ appInfo: { id: 'Owner12345.Home' } }),
     getAppsInfo: (ok, fail) => requests.push({ ok, fail }),
     launch: (id, ok, fail) => launches.push({ id, ok, fail }),
     getAppMetaData: id => {metadataCalls.push(id);if(metadataError)throw Error('metadata denied');return typeof metadata==='function'?metadata(id):metadata;},
-    launchAppControl: (control,id,ok,fail) => {controls.push({control,id,ok,fail});if(throwControl)throw Error('control denied');}
+    launchAppControl: (control,id,ok,fail) => {
+      if (id.endsWith('.IpControl')) { if (ipControl) ok(); else fail(); return; }
+      controls.push({control,id,ok,fail});if(throwControl)throw Error('control denied');}
 
   };
   if(noMetadata)delete application.getAppMetaData;
@@ -25,6 +27,12 @@ function harness({ supported = true, throwSource = false, metadata = [], noMetad
     WebSocket:function(){sockets.push({});throw Error('Unexpected network connection');},
     XMLHttpRequest:function(){requestsHTTP.push({});throw Error('Unexpected HTTP request');},
     localStorage:{getItem(){throw Error('Unexpected token read');},setItem(){throw Error('Unexpected token write');}}};
+  if (ipControl) window.XMLHttpRequest = function () {
+    this.open = (method, url) => { this.method = method; this.url = url; };
+    this.send = () => ipRequests.push(this);
+    this.abort = () => { this.aborted = true; };
+    this.reply = (body, status = 200) => { this.status = status; this.responseText = JSON.stringify(body); this.onload?.(); };
+  };
   if (supported) {
     const genuineSources = new WeakSet();
     window.tizen.systeminfo = { getPropertyValue: (name, ok, fail) => {
@@ -60,7 +68,7 @@ function harness({ supported = true, throwSource = false, metadata = [], noMetad
     now += ms;
     for (const [id, timer] of timers) if (timer.at <= now) { timers.delete(id); timer.callback(); }
   }
-  return { device: window.FrameDevice, requests, launches, sourceRequests, arrayRequests, changes, requestsHTTP, sockets, controls, metadataCalls, advance, setCurrent: value => { current = value; } };
+  return { device: window.FrameDevice, requests, launches, sourceRequests, arrayRequests, changes, requestsHTTP, sockets, controls, metadataCalls, ipRequests, advance, setCurrent: value => { current = value; } };
 }
 
 test('a 500-app catalogue can arrive after the old eight-second deadline', () => {
@@ -263,6 +271,56 @@ test('input switching uses a discovered disconnected record and completes only a
   assert.equal(h.launches[0].id, 'org.tizen.tv-viewer');
   h.launches[0].ok(); assert.equal(results[0].error, null);
   assert.equal(results[0].input.number, 1);
+});
+
+test('configured HDMI 5 uses IP Control and native viewer without a synthetic source', () => {
+  const h = harness({ ipControl: true }), results = [];
+  h.device.launchApp('cleanframe.hdmi5', (error, value) => results.push({ error, value }));
+  h.sourceRequests[0].ok(video);
+  h.ipRequests[0].reply({configured: true, ok: true, inputSource: 'HDMI4'});
+  assert.equal(h.ipRequests[1].method, 'POST');
+  assert.equal(h.ipRequests[1].url, 'http://127.0.0.1:47791/inputs/hdmi5/select');
+  assert.equal(h.changes.length, 0);
+  h.ipRequests[1].reply({configured: true, ok: true, inputSource: 'HDMI5'});
+  assert.equal(results.length, 0);
+  assert.equal(h.launches[0].id, 'org.tizen.tv-viewer');
+  h.launches[0].ok();
+  assert.equal(results[0].error, null);
+  assert.equal(results[0].value.number, 5);
+});
+
+test('IP Control active state, failure and cancellation remain truthful and never retry selection', () => {
+  for (const mode of ['active', 'rejected', 'cancelled', 'timeout']) {
+    const h = harness({ ipControl: true }), results = [];
+    h.device.sources((error, list) => results.push({error, list}));
+    h.sourceRequests[0].ok(video);
+    h.ipRequests[0].reply({configured: true, ok: true, inputSource: 'HDMI5'});
+    const row = results[0].list.find(s => s.number === 5);
+    assert.equal(row.ipControl, true);
+    assert.equal(row.active, true);
+    assert.equal(row.source, null);
+    if (mode === 'active') continue;
+    const selected = [];
+    h.device.setSource(5, error => selected.push(error));
+    assert.equal(h.ipRequests.length, 2);
+    if (mode === 'cancelled') h.device.cancelSource();
+    if (mode === 'timeout') h.advance(12000);
+    h.ipRequests[1].reply({configured: true, ok: mode !== 'rejected'});
+    assert.equal(selected.length, 1);
+    assert.ok(selected[0]);
+    assert.equal(h.launches.length, 0);
+    assert.equal(h.changes.length, 0);
+    assert.equal(h.ipRequests.length, 2);
+  }
+});
+
+test('unconfigured bridge preserves native HDMI 5 and never reads a browser token', () => {
+  const h = harness({ipControl: true}), real = {type: 'HDMI', number: 5};
+  h.device.setSource(5, () => {});
+  h.sourceRequests[0].ok({connected: [real], disconnected: []});
+  h.ipRequests[0].reply({configured: false});
+  assert.equal(h.changes[0].source, real);
+  assert.equal(h.ipRequests.length, 1);
 });
 test('source and viewer failures are errors and never hide the launcher', () => {
   for (const mode of ['source', 'throw', 'viewer', 'different']) {

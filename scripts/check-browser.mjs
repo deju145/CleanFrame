@@ -42,7 +42,7 @@ async function run(name, fn) {
 async function closePage() { if (current) { current.__closing = true; await current.close(); current = null; } }
 
 // Production still calls its unmodified device.js adapter.
-function installHarness({ seed, legacy, mock, catalog, minuteMs, catalogFailure, noFontAPI, storageFailure, currentAppId, initiallyHidden, pauseHiddenFrames, rejectDecode, inputUnavailable }) {
+function installHarness({ seed, legacy, mock, catalog, minuteMs, catalogFailure, noFontAPI, storageFailure, currentAppId, initiallyHidden, pauseHiddenFrames, rejectDecode, inputUnavailable, ipControl }) {
   if (!sessionStorage.getItem('__cleanframe_seeded')) {
     if (seed !== undefined) localStorage.setItem('cleanframe.home.v1', typeof seed === 'string' ? seed : JSON.stringify(seed));
     if (legacy !== undefined) localStorage.setItem('cleanframe.shore.v1', typeof legacy === 'string' ? legacy : JSON.stringify(legacy));
@@ -95,6 +95,7 @@ function installHarness({ seed, legacy, mock, catalog, minuteMs, catalogFailure,
         setTimeout(() => tv.launchFailure ? fail({ name: 'NotFoundError', message: 'App unavailable for QA' }) : ok(), 0);
       },
       launchAppControl(control, id, ok, fail) {
+        if (id.endsWith('.IpControl')) { if (ipControl) ok(); else fail({name: 'NotSupportedError'}); return; }
         const tv = window.__tv; tv.calls.push({ method: 'launchAppControl', id, control });
         setTimeout(() => tv.launchFailure ? fail({ name: 'UnknownError', message: 'Screen unavailable for QA' }) : ok(), 0);
       }
@@ -503,6 +504,39 @@ try {
       });
       check('Wallpaper name and count retain their separation at ' + width, Math.abs(caption - 24) < .5, caption);
     }
+  });
+  await run('IP Control HDMI 5 tile, dock and viewer handoff', async () => {
+    let source = 'HDMI4', rejected = false, selections = 0;
+    await page({ipControl: true}, async p => {
+      await p.route('http://127.0.0.1:47791/**', route => {
+        const select = route.request().method() === 'POST';
+        if (select) { selections++; if (!rejected) source = 'HDMI5'; }
+        return route.fulfill({contentType: 'application/json', headers: {'Access-Control-Allow-Origin': '*'},
+          body: JSON.stringify({configured: true, ok: !(select && rejected), inputSource: source})});
+      });
+    });
+    await group('samsung'); await act('samsung.inputs');
+    await current.waitForFunction(() => document.querySelector('[data-action="input.5"]').textContent.includes('IP Control'));
+    check('Unreported HDMI 5 uses IP Control without a fabricated native record', await current.locator('[data-action="input.5"]').count() === 1);
+    const before = await stored();
+    await act('input.5'); await current.waitForFunction(() => __tv.calls.some(c => c.id === 'org.tizen.tv-viewer'));
+    check('One selection opens native viewer without TVWindow', selections === 1 && await current.evaluate(() => __tv.calls.length === 1 && __tv.calls[0].id === 'org.tizen.tv-viewer'));
+    await current.evaluate(() => window.dispatchEvent(new Event('focus')));
+    await current.waitForFunction(() => document.querySelector('[data-action="input.5"]').textContent.includes('Active'));
+    check('Active input comes from IP Control after returning', !(await current.locator('[data-action="input.2"]').innerText()).includes('Active'));
+    check('Input selection preserves preferences', same(await stored(), before));
+    rejected = true;
+    await current.evaluate(() => { __tv.calls = []; });
+    await act('input.5'); await current.waitForFunction(() => ShoreQA.state().view === 'message');
+    check('Rejected IP selection shows error with no native fallback or viewer', selections === 2 && await current.evaluate(() => __tv.calls.length === 0));
+    check('Rejected IP command is not automatically retried', (await current.locator('#stage').innerText()).includes('not retried'));
+    await nav('back');
+    rejected = false;
+    await current.evaluate(() => { __tv.calls = []; });
+    await current.evaluate(() => { window.__dockResult = null; FrameDevice.launchApp('cleanframe.hdmi5', error => { window.__dockResult = error || 'ok'; }); });
+    await current.waitForFunction(() => __dockResult === 'ok');
+    check('PS5 dock target shares the same IP Control route', selections === 3 && await current.evaluate(() => __tv.calls.length === 1 && __tv.calls[0].id === 'org.tizen.tv-viewer'));
+    await closePage();
   });
   await run('HDMI input chooser and recovery', async () => {
     await page();

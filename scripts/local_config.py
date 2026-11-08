@@ -20,11 +20,16 @@ def manifest_identity(data):
     item = items[0]
     identity = {'package_id': item.get('package'), 'app_id': item.get('id')}
     validate_identity(identity)
+    services = XML.fromstring(data).findall('{http://tizen.org/ns/widgets}service')
+    if services:
+        if (len(services) != 1 or services[0].get('id') != identity['package_id'] + '.IpControl'
+                or services[0].get('on-boot') != 'false' or services[0].get('auto-restart') != 'false'):
+            raise ValueError('IP Control service must use this package identity and remain on-demand.')
     return identity
 
 
 def override_identity(data, identity):
-    """Change only the two identity values; retain manifest bytes and prefixes."""
+    """Overlay app and optional service identities; retain manifest formatting."""
     validate_identity(identity)
     manifest_identity(data)
     tags = list(re.finditer(rb'<tizen:application\b[^>]*>', data))
@@ -37,6 +42,14 @@ def override_identity(data, identity):
         if count != 1:
             raise ValueError('Expected one ' + attribute + ' attribute in the application tag.')
     result = data[:tags[0].start()] + tag + data[tags[0].end():]
+    service_tags = list(re.finditer(rb'<tizen:service\b[^>]*>', result))
+    if service_tags:
+        service_tag = service_tags[0].group()
+        updated, count = re.subn(rb'(?<![\w:.-])(id\s*=\s*)([\"\'])([^\"\']*)\2',
+            lambda match: match[1] + match[2] + (identity['package_id'] + '.IpControl').encode() + match[2], service_tag)
+        if count != 1:
+            raise ValueError('Expected one service identity attribute.')
+        result = result[:service_tags[0].start()] + updated + result[service_tags[0].end():]
     if manifest_identity(result) != identity:
         raise ValueError('Manifest identity override could not be verified.')
     return result

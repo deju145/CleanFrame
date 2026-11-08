@@ -1,4 +1,4 @@
-/* Public Tizen app and HbbTV controls. No network controller or credentials. */
+/* Tizen controls plus an optional loopback HDMI 5 bridge. No browser credentials. */
 (function () {
   'use strict';
   var IDS = {
@@ -45,6 +45,55 @@
     function finish(err, value) { if (finished) return; finished = true; clearTimeout(timer); done(err, value); }
     return finish;
   }
+  var ipConfigured = false;
+  var ipStarting = null;
+  function ipService(done) {
+    if (ipStarting) { ipStarting.push(done); return; }
+    var app = api(), tz = window.tizen;
+    if (!app || typeof app.launchAppControl !== 'function' || !tz || typeof tz.ApplicationControl !== 'function') { done(false); return; }
+    ipStarting = [done];
+    var finish = bounded(function (err) {
+      var waiting = ipStarting || [];
+      ipStarting = null;
+      waiting.forEach(function (callback) { callback(!err); });
+    }, 2000);
+    try {
+      app.launchAppControl(new tz.ApplicationControl('http://tizen.org/appcontrol/operation/service'),
+        selfId().split('.')[0] + '.IpControl', function () { finish(null); }, function () { finish(true); });
+    } catch (err) { finish(true); }
+  }
+  function ipRequest(path, method, done, timeout) {
+    var request = null;
+    var finish = bounded(function (err, value) {
+      if (request) { request.onload = request.onerror = request.ontimeout = null; }
+      done(err, value);
+    }, timeout || 1500);
+    try {
+      request = new window.XMLHttpRequest();
+      request.open(method, 'http://127.0.0.1:47791' + path, true);
+      request.timeout = timeout || 1500;
+      request.onerror = request.ontimeout = function () { finish(true); };
+      request.onload = function () {
+        try {
+          var value = JSON.parse(request.responseText);
+          if (value && typeof value.configured === 'boolean') { ipConfigured = value.configured; finish(null, value); }
+          else finish(true);
+        } catch (err) { finish(true); }
+      };
+      request.send();
+    } catch (err) { finish(true); }
+    return function () { finish(true); if (request && typeof request.abort === 'function') request.abort(); };
+  }
+  function ipStatus(done) {
+    ipService(function (ready) {
+      if (!ready) { done(null); return; }
+      ipRequest('/inputs/hdmi5', 'GET', function (err, status) {
+        if (!err) { done(status); return; }
+        // One read-only startup grace, never a retry of a selection command.
+        setTimeout(function () { ipRequest('/inputs/hdmi5', 'GET', function (error, value) { done(error ? null : value); }); }, 200);
+      });
+    });
+  }
   var sourceCancel = null;
   // Native source objects are opaque: retain the original reference, never a
   // plain object or JSON copy. This cache lasts only for this running app.
@@ -54,6 +103,21 @@
     var sys = window.tizen && window.tizen.systeminfo, tvw = window.tizen && window.tizen.tvwindow;
     if (!sys || (typeof sys.getPropertyValue !== 'function' && typeof sys.getPropertyValueArray !== 'function') || !tvw || typeof tvw.setSource !== 'function') { unavailable(done); return; }
     var finish = bounded(done);
+    var nativeList = null, ipState = null, ipDone = false;
+    function complete() {
+      if (!nativeList || !ipDone) return;
+      if (ipState && ipState.configured) {
+        nativeList.forEach(function (item) {
+          if (typeof ipState.inputSource === 'string') item.active = ipState.inputSource === 'HDMI' + item.number;
+          if (item.number === 5) {
+            item.ipControl = true; item.manual = false; item.source = null; item.name = 'HDMI 5';
+            item.detail = 'Local IP Control'; item.connected = ipState.inputSource === 'HDMI5';
+          }
+        });
+      }
+      finish(null, nativeList);
+    }
+    ipStatus(function (status) { ipState = status; ipDone = true; complete(); });
     function receive(videos) {
         var list = [], byPort = {}, active = null;
         try { if (typeof tvw.getSource === 'function') active = tvw.getSource(); } catch (err) { /* Status may be unavailable while discovery still works. */ }
@@ -86,7 +150,8 @@
             detail: 'Reported HDMI inputs: ' + (numbers.join(', ') || 'none') + '. Current source: ' + current + '. Source providers: ' + videos.length + '.' });
         }
         list.sort(function (a, b) { return a.number - b.number; });
-        finish(null, list);
+        nativeList = list;
+        complete();
     }
     function readOne() {
       if (typeof sys.getPropertyValue !== 'function') { finish({ message: 'The TV could not list its inputs.' }); return; }
@@ -113,6 +178,7 @@
     var tvw = window.tizen && window.tizen.tvwindow, app = api(), finished = false;
     if (typeof port !== 'number' || !isFinite(port) || port < 0 || Math.floor(port) !== port) { done({ message: 'This HDMI input is not available.' }); return; }
     if (!tvw || typeof tvw.setSource !== 'function' || !app || typeof app.launch !== 'function') { unavailable(done); return; }
+    var abortIp = null;
     var timer = setTimeout(function () { finish({ message: 'The TV did not respond. Please try again.' }); }, 8000);
     function finish(err, value) {
       if (finished) return;
@@ -120,14 +186,34 @@
       if (sourceCancel === cancel) sourceCancel = null;
       done(err, value);
     }
-    function cancel() { finish({ message: 'Input change cancelled.', cancelled: true }); }
+    function cancel() { finish({ message: 'Input change cancelled.', cancelled: true }); if (abortIp) abortIp(); }
     sourceCancel = cancel;
+    function selectIp() {
+      clearTimeout(timer);
+      timer = setTimeout(function () { finish({ message: 'The TV did not respond. Please try again.' }); }, 12000);
+      abortIp = ipRequest('/inputs/hdmi5/select', 'POST', function (err, result) {
+        if (finished) return;
+        if (err || !result || !result.ok) {
+          finish({ message: 'The TV could not switch to HDMI 5.', detail: 'Check IP Control setup. The command was not retried.' }); return;
+        }
+        openViewer({number: 5, name: 'HDMI 5', ipControl: true});
+      }, 10000);
+    }
+    function openViewer(input) {
+      try {
+        app.launch('org.tizen.tv-viewer', function () { finish(null, input); }, function () {
+          finish({ message: 'The input was selected, but the TV viewer could not open.', detail: 'Use the remote’s Source control to view the input.' });
+        });
+      } catch (err) { finish({ message: 'The input was selected, but the TV viewer could not open.' }); }
+    }
+    if (port === 5 && ipConfigured) { selectIp(); return; }
     sources(function (err, list) {
       if (finished) return;
       if (err) { finish(err); return; }
       var input = null;
       list.some(function (item) { if (item.number === port) { input = item; return true; } return false; });
       if (!input) { finish({ message: 'This HDMI input is no longer available.' }); return; }
+      if (port === 5 && input.ipControl) { selectIp(); return; }
       if (!input.source) {
         finish({ message: 'HDMI 5 is not reported by the TV.', detail: input.detail });
         return;
@@ -143,11 +229,7 @@
         tvw.setSource(input.source, function (selected) {
           if (finished) return;
           if (selected && (selected.type !== 'HDMI' || selected.number !== port)) { finish({ message: 'The TV selected a different input. Please try again.' }); return; }
-          try {
-            app.launch('org.tizen.tv-viewer', function () { finish(null, input); }, function () {
-              finish({ message: 'The input was selected, but the TV viewer could not open.', detail: 'Use the remote’s Source control to view the input.' });
-            });
-          } catch (error) { finish({ message: 'The input was selected, but the TV viewer could not open.' }); }
+          openViewer(input);
         }, function (error) { if (!finished) rejected(error); });
       } catch (error) { rejected(error); }
     });
@@ -207,7 +289,7 @@
         list.forEach(function (a) {
           var brand = brandForApp(a), primary = !!brand, stream = STREAMING.indexOf(a.id) >= 0;
           var consumer = /^[A-Za-z0-9]{10}\.[A-Za-z0-9_-]+$/.test(a.id) || CONSUMER_SYSTEM.indexOf(a.id) >= 0;
-          if (a.id === self || INTERNAL.indexOf(a.id) >= 0 || seen[a.id] || !a.name || (!primary && !stream && (!a.show || !consumer))) return;
+          if (a.id === self || a.id === self.split('.')[0] + '.IpControl' || INTERNAL.indexOf(a.id) >= 0 || seen[a.id] || !a.name || (!primary && !stream && (!a.show || !consumer))) return;
           if (!primary && /(?:service|worker|preview|promotion|plugin|launcher|test|sdk|^ep[ -]|factory|daemon)/i.test(a.name + ' ' + a.id)) return;
           if (/-dummy$/.test(a.id) || a.id === 'com.samsung.tv.cobalt-yt') return;
           seen[a.id] = true;

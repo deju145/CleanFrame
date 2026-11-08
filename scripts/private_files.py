@@ -6,7 +6,7 @@ from local_config import manifest_identity
 
 PRIVATE_SUFFIXES = {'.p12', '.pfx', '.pkcs12', '.jks', '.keystore', '.pem', '.key', '.csr'}
 PRIVATE_NAMES = {'profiles.xml', 'certificate-password.txt', 'session.json', '.env',
-                 'signing.json', 'device.json', 'sdk.info'}
+                 'signing.json', 'device.json', 'sdk.info', 'ip-control-token.json', 'cleanframe-hdmi5-v1.json'}
 SECRET_PATTERNS = [
     rb'-----BEGIN (?:RSA |EC |DSA |OPENSSH |ENCRYPTED )?PRIVATE KEY-----',
     rb'gh[pousr]_[A-Za-z0-9]{25,}', rb'github_pat_[A-Za-z0-9_]{25,}',

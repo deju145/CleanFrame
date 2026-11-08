@@ -82,7 +82,7 @@ which rejects/returns an empty array or does not respond within two seconds,
 retains the single-property route. The
 fallback is read-only, runs at most once and keeps the existing timeout and
 selection cancellation guards. This does not assume how Frame Pro divides its
-inputs between source providers; the fifth port still requires a native record.
+inputs between source providers; a native fifth-port selection still requires a native record. The optional IP Control route below handles firmware that omits it.
 
 An unknown HDMI 5 row remains visible with “Not reported by TV”.
 Selecting that row without a genuine source shows the reported source details;
@@ -130,4 +130,8 @@ The Home controls include Sources, which opens the same dynamically discovered i
 
 The dock remembers the selected app without retaining its highlight while a Home utility has focus. Stremio, BBC iPlayer, Channel 4, itvX and STV package families use bundled monochrome marks. LIVE TV and PS5 have monochrome marks too. A matching five-app saved dock receives the two input shortcuts once; other arrangements and appearance settings are preserved.
 
-Apps declaring `http://samsung.com/tv/metadata/hbbtv.link` launch through `org.tizen.hbbtv` using the default app-control operation and `tizenid`, `hbbtv`, `deeplink=true` data. The HbbTV URL comes from the selected app’s installed metadata, including BBC iPlayer’s wrapper ID. Missing, empty, unavailable or unreadable metadata preserves the ordinary app launch. HbbTV failures are reported without a second launch attempt; callbacks retain the eight-second deadline. No HTTP, WebSocket, Vetro, root, pairing or Mac runtime is involved. API acceptance does not establish visible startup. The old networking access entries and internet privilege are removed; existing signing identity, Sources and icons are unchanged. The metadata handoff follows AeroTizen PR #1, with its MIT notice bundled.
+Apps declaring `http://samsung.com/tv/metadata/hbbtv.link` launch through `org.tizen.hbbtv` using the default app-control operation and `tizenid`, `hbbtv`, `deeplink=true` data. The HbbTV URL comes from the selected app’s installed metadata, including BBC iPlayer’s wrapper ID. Missing, empty, unavailable or unreadable metadata preserves the ordinary app launch. HbbTV failures are reported without a second launch attempt; callbacks retain the eight-second deadline. No HTTP, WebSocket, Vetro, root, pairing or Mac runtime is involved. API acceptance does not establish visible startup. The old BBC networking entries are retired; the separate optional HDMI 5 service adds its own loopback access and internet/filesystem privileges. Existing signing identity, Sources and icons are retained. The metadata handoff follows AeroTizen PR #1, with its MIT notice bundled.
+
+## Optional HDMI 5 IP Control
+
+After private token setup, the PS5 dock shortcut and HDMI 5 Inputs row use local IP Control when the TV cannot expose that port through its native API. The row shows IP Control or Active; current input comes from IP Control. A successful selection opens Samsung’s native TV viewer. Other ports keep their genuine native records. Commands are bounded and never automatically retried. Cancellation suppresses a late viewer launch. Without configuration, native HDMI 5 and the unreported-port error retain their existing behaviour. See [setup and scope](HDMI5-IP-CONTROL.md). The service starts on demand, has no Home watcher or boot task, and never changes the Home assignment.
